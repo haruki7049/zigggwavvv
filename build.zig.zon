@@ -4,7 +4,12 @@
     .fingerprint = 0x2bf81cd15a711e89, // Changing this has security and trust implications.
     .minimum_zig_version = "0.15.2",
 
-    .dependencies = .{},
+    .dependencies = .{
+        .riff_zig = .{
+            .url = "https://github.com/haruki7049/RIFF.zig/archive/refs/tags/0.1.0.tar.gz",
+            .hash = "riff_zig-0.1.0-J7H0AxBpAABGZ4SARtJFYOfpXv3YYqZLml3YJYiUUIBh",
+        },
+    },
 
     .paths = .{
         "build.zig",
