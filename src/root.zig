@@ -102,10 +102,10 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
     };
 }
 
-test "read i16_pcm.wav" {
+test "read 16bit_pcm.wav" {
     const allocator = std.testing.allocator;
 
-    const wavedata = @embedFile("./assets/i16_pcm.wav");
+    const wavedata = @embedFile("./assets/16bit_pcm.wav");
     var reader = std.Io.Reader.fixed(wavedata);
     const result: Wave = try read(allocator, &reader);
     defer result.deinit(allocator);
@@ -129,10 +129,10 @@ test "read i16_pcm.wav" {
     try std.testing.expectEqualSlices(f32, expected_samples, result.samples);
 }
 
-test "read u8_pcm.wav" {
+test "read 8bit_pcm.wav" {
     const allocator = std.testing.allocator;
 
-    const wavedata = @embedFile("./assets/u8_pcm.wav");
+    const wavedata = @embedFile("./assets/8bit_pcm.wav");
     var reader = std.Io.Reader.fixed(wavedata);
     const result: Wave = try read(allocator, &reader);
     defer result.deinit(allocator);
