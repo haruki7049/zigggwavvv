@@ -275,70 +275,129 @@ test "Fail to read 64bit_ieee_float.wav" {
     try std.testing.expectError(error.UnsupportedBits, result);
 }
 
-pub fn write(wave: Wave, writer: anytype, allocator: std.mem.Allocator) anyerror!void {
+pub const WriteOptions = struct {
+    allocator: std.mem.Allocator,
+    use_fact: bool = false,
+    use_peak: bool = false,
+    peak_timestamp: u32 = 0,
+};
+
+pub fn write(wave: Wave, writer: anytype, options: WriteOptions) anyerror!void {
+    var chunk_list: std.array_list.Aligned(riff.Chunk, null) = .empty;
+
     const bits_per_sample: u16 = wave.bits;
     const block_align = wave.channels * (bits_per_sample / 8);
     const bytes_per_sec = wave.sample_rate * block_align;
 
     // Wave fmt chunk
-    var fmt_payload = std.Io.Writer.Allocating.init(allocator);
-    defer fmt_payload.deinit();
-    const fw = &fmt_payload.writer;
+    {
+        var fmt_payload = std.Io.Writer.Allocating.init(options.allocator);
+        defer fmt_payload.deinit();
+        const fw = &fmt_payload.writer;
 
-    try fw.writeInt(u16, @intFromEnum(wave.format_code), .little);
-    try fw.writeInt(u16, wave.channels, .little);
-    try fw.writeInt(u32, wave.sample_rate, .little);
-    try fw.writeInt(u32, bytes_per_sec, .little);
-    try fw.writeInt(u16, block_align, .little);
-    try fw.writeInt(u16, bits_per_sample, .little);
+        try fw.writeInt(u16, @intFromEnum(wave.format_code), .little);
+        try fw.writeInt(u16, wave.channels, .little);
+        try fw.writeInt(u32, wave.sample_rate, .little);
+        try fw.writeInt(u32, bytes_per_sec, .little);
+        try fw.writeInt(u16, block_align, .little);
+        try fw.writeInt(u16, bits_per_sample, .little);
 
-    // Wave data chunk
-    var data_payload = std.Io.Writer.Allocating.init(allocator);
-    defer data_payload.deinit();
-    const dw = &data_payload.writer;
-
-    for (wave.samples) |s| {
-        switch (wave.bits) {
-            8 => switch (wave.format_code) {
-                .pcm => {
-                    const val: u8 = @intFromFloat(std.math.clamp(s * std.math.maxInt(u8), -std.math.maxInt(u8), std.math.maxInt(u8) - 1));
-                    try dw.writeInt(u8, val, .little);
-                },
-                else => return error.UnsupportedFormatCode,
-            },
-            16 => switch (wave.format_code) {
-                .pcm => {
-                    const val: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16) - 1));
-                    try dw.writeInt(i16, val, .little);
-                },
-                else => return error.UnsupportedFormatCode,
-            },
-            24 => switch (wave.format_code) {
-                .pcm => {
-                    const val: i24 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24) - 1));
-                    try dw.writeInt(i24, val, .little);
-                },
-                else => return error.UnsupportedFormatCode,
-            },
-            32 => switch (wave.format_code) {
-                .pcm => {
-                    const val: i32 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32) - 1));
-                    try dw.writeInt(i32, val, .little);
-                },
-                else => return error.UnsupportedFormatCode,
-            },
-            else => return error.UnsupportedBits,
-        }
+        try chunk_list.append(options.allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new("fmt "), .data = try options.allocator.dupe(u8, fmt_payload.written()) } });
     }
 
-    const chunks = try allocator.alloc(riff.Chunk, 2);
-    chunks[0] = .{ .chunk = .{ .four_cc = try riff.FourCC.new("fmt "), .data = try allocator.dupe(u8, fmt_payload.written()) } };
-    chunks[1] = .{ .chunk = .{ .four_cc = try riff.FourCC.new("data"), .data = try allocator.dupe(u8, data_payload.written()) } };
+    // Wave fact chunk
+    if (options.use_fact) {
+        var fact_payload = std.Io.Writer.Allocating.init(options.allocator);
+        defer fact_payload.deinit();
+        const fw = &fact_payload.writer;
 
-    const wave_riff = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = chunks } };
-    defer wave_riff.deinit(allocator);
+        try fw.writeInt(u32, @intCast(wave.samples.len / wave.channels), .little);
+        try chunk_list.append(options.allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new("fact"), .data = try options.allocator.dupe(u8, fact_payload.written()) } });
+    }
 
-    try riff.write(wave_riff, allocator, writer);
+    // Wave PEAK chunk
+    if (options.use_peak) {
+        var peak_payload = std.Io.Writer.Allocating.init(options.allocator);
+        defer peak_payload.deinit();
+        const pw = &peak_payload.writer;
+
+        // Version (usually 1)
+        try pw.writeInt(u32, 1, .little);
+        // Timestamp (Unix time or 0)
+        try pw.writeInt(u32, options.peak_timestamp, .little);
+
+        // Calculate peak for each channel
+        for (0..wave.channels) |ch| {
+            var max_val: f32 = 0;
+            var max_pos: u32 = 0;
+
+            var i: usize = ch;
+            while (i < wave.samples.len) : (i += wave.channels) {
+                const abs_val = @abs(@as(f32, @floatCast(wave.samples[i])));
+                if (abs_val > max_val) {
+                    max_val = abs_val;
+                    max_pos = @intCast(i / wave.channels);
+                }
+            }
+
+            try pw.writeAll(std.mem.asBytes(&max_val));
+            try pw.writeInt(u32, max_pos, .little);
+        }
+
+        try chunk_list.append(options.allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new("PEAK"), .data = try options.allocator.dupe(u8, peak_payload.written()) } });
+    }
+
+    // Wave data chunk
+    {
+        var data_payload = std.Io.Writer.Allocating.init(options.allocator);
+        defer data_payload.deinit();
+        const dw = &data_payload.writer;
+
+        for (wave.samples) |s| {
+            switch (wave.bits) {
+                8 => switch (wave.format_code) {
+                    .pcm => {
+                        const val: u8 = @intFromFloat(std.math.clamp(s * std.math.maxInt(u8), -std.math.maxInt(u8), std.math.maxInt(u8) - 1));
+                        try dw.writeInt(u8, val, .little);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                16 => switch (wave.format_code) {
+                    .pcm => {
+                        const val: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16) - 1));
+                        try dw.writeInt(i16, val, .little);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                24 => switch (wave.format_code) {
+                    .pcm => {
+                        const val: i24 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24) - 1));
+                        try dw.writeInt(i24, val, .little);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                32 => switch (wave.format_code) {
+                    .pcm => {
+                        const val: i32 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32) - 1));
+                        try dw.writeInt(i32, val, .little);
+                    },
+                    .ieee_float => {
+                        const val: f32 = @floatCast(s);
+                        try dw.writeInt(u32, @bitCast(val), .little);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                else => return error.UnsupportedBits,
+            }
+        }
+
+        try chunk_list.append(options.allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new("data"), .data = try options.allocator.dupe(u8, data_payload.written()) } });
+    }
+
+    const wave_riff = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = try chunk_list.toOwnedSlice(options.allocator) } };
+    defer wave_riff.deinit(options.allocator);
+
+    try riff.write(wave_riff, options.allocator, writer);
 }
 
 test "write 8bit_pcm.wav" {
@@ -366,7 +425,10 @@ test "write 8bit_pcm.wav" {
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, allocator);
+    try write(result, &w.writer, .{
+        .allocator = allocator,
+        .use_fact = false,
+    });
 
     const expected = @embedFile("./assets/8bit_pcm.wav");
     try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
@@ -397,7 +459,10 @@ test "write 16bit_pcm.wav" {
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, allocator);
+    try write(result, &w.writer, .{
+        .allocator = allocator,
+        .use_fact = false,
+    });
 
     const expected = @embedFile("./assets/16bit_pcm.wav");
     try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
@@ -428,7 +493,10 @@ test "write 24bit_pcm.wav" {
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, allocator);
+    try write(result, &w.writer, .{
+        .allocator = allocator,
+        .use_fact = false,
+    });
 
     const expected = @embedFile("./assets/24bit_pcm.wav");
     try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
@@ -459,8 +527,47 @@ test "write 32bit_pcm.wav" {
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, allocator);
+    try write(result, &w.writer, .{
+        .allocator = allocator,
+        .use_fact = false,
+    });
 
     const expected = @embedFile("./assets/32bit_pcm.wav");
+    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+}
+
+test "write 32bit_ieee_float.wav" {
+    const allocator = std.testing.allocator;
+
+    var samples = [_]f128{
+        0,
+        0.0501186586916446685791015625,
+        0.10004042088985443115234375,
+        0.14956915378570556640625,
+        0.19851027429103851318359375,
+        0.2466715276241302490234375,
+        0.2938636839389801025390625,
+        0.33990132808685302734375,
+        0.38460361957550048828125,
+        0.4277949631214141845703125,
+    };
+    const result: Wave = Wave{
+        .format_code = .ieee_float,
+        .sample_rate = 44100,
+        .channels = 1,
+        .bits = 32,
+        .samples = &samples,
+    };
+
+    var w = std.Io.Writer.Allocating.init(allocator);
+    defer w.deinit();
+    try write(result, &w.writer, .{
+        .allocator = allocator,
+        .use_fact = true,
+        .use_peak = true,
+        .peak_timestamp = 0x695DE0F8,
+    });
+
+    const expected = @embedFile("./assets/32bit_ieee_float.wav");
     try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
 }
