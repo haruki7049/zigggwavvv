@@ -58,8 +58,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
             var samples_list: []f128 = try allocator.alloc(f128, samples_count);
             errdefer allocator.free(samples_list);
 
-            var i: usize = 0;
-            while (i < samples_count) : (i += 1) {
+            for (0..samples_count) |i| {
                 switch (bits) {
                     8 => {
                         const val: u8 = data[i];
