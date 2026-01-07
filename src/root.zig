@@ -261,7 +261,7 @@ pub fn write(wave: Wave, writer: anytype, allocator: std.mem.Allocator) anyerror
 
     const chunks = try allocator.alloc(riff.Chunk, 2);
     chunks[0] = .{ .chunk = .{ .four_cc = try riff.FourCC.new("fmt "), .data = try allocator.dupe(u8, fmt_payload.written()) } };
-    chunks[0] = .{ .chunk = .{ .four_cc = try riff.FourCC.new("data"), .data = try allocator.dupe(u8, data_payload.written()) } };
+    chunks[1] = .{ .chunk = .{ .four_cc = try riff.FourCC.new("data"), .data = try allocator.dupe(u8, data_payload.written()) } };
 
     const wave_riff = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = chunks } };
     defer wave_riff.deinit(allocator);
