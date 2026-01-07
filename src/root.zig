@@ -53,11 +53,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                 8 => data.len, // 8bit PCM
                 16 => data.len / 2, // 16bit PCM
                 24 => data.len / 3, // 24bit PCM
-                32 => switch (format_code) {
-                    .pcm => data.len / 4, // 32bit PCM
-                    .ieee_float => return error.NotImplemented, // 32bit IEEE Float
-                    else => return error.UnsupportedFormatCode,
-                },
+                32 => data.len / 4,
                 else => return error.UnsupportedBits,
             };
             var samples_list: []f128 = try allocator.alloc(f128, samples_count);
