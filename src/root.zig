@@ -1,14 +1,6 @@
 const std = @import("std");
 const riff = @import("riff");
 
-/// Audio sample bit depth
-pub const Bits = enum {
-    u8,
-    i16,
-    i24,
-    i32,
-};
-
 /// Audio encoding format
 pub const FormatCode = enum(u16) {
     pcm = 1,
@@ -18,9 +10,10 @@ pub const FormatCode = enum(u16) {
 
 /// WAV structure representing audio properties and normalized samples
 pub const Wave = struct {
+    format_code: FormatCode,
     sample_rate: u32,
     channels: u16,
-    bits: Bits,
+    bits: u16,
     samples: []f128,
 
     pub fn deinit(self: Wave, allocator: std.mem.Allocator) void {
@@ -37,9 +30,10 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
         else => return error.InvalidFormat,
     };
 
+    var format_code: FormatCode = undefined;
     var sample_rate: u32 = undefined;
     var channels: u16 = undefined;
-    var bits: Bits = undefined;
+    var bits: u16 = undefined;
     var samples: []f128 = undefined;
 
     for (r.chunks) |c| {
@@ -48,23 +42,23 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
         if (std.mem.eql(u8, &id, "fmt ")) {
             const data = c.chunk.data;
 
+            format_code = @enumFromInt(std.mem.readInt(u16, data[0..2], .little));
             channels = std.mem.readInt(u16, data[2..4], .little);
             sample_rate = std.mem.readInt(u32, data[4..8], .little);
-            bits = switch (std.mem.readInt(u16, data[14..16], .little)) {
-                8 => .u8,
-                16 => .i16,
-                24 => .i24,
-                32 => .i32,
-                else => return error.UnsupportedBitDepth,
-            };
+            bits = std.mem.readInt(u16, data[14..16], .little);
         } else if (std.mem.eql(u8, &id, "data")) {
             const data = c.chunk.data;
 
             const samples_count = switch (bits) {
-                .u8 => data.len,
-                .i16 => data.len / 2,
-                .i24 => data.len / 3,
-                .i32 => data.len / 4,
+                8 => data.len, // 8bit PCM
+                16 => data.len / 2, // 16bit PCM
+                24 => data.len / 3, // 24bit PCM
+                32 => switch (format_code) {
+                    .pcm => data.len / 4, // 32bit PCM
+                    .ieee_float => return error.NotImplemented, // 32bit IEEE Float
+                    else => return error.UnsupportedFormatCode,
+                },
+                else => return error.UnsupportedBits,
             };
             var samples_list: []f128 = try allocator.alloc(f128, samples_count);
             errdefer allocator.free(samples_list);
@@ -72,25 +66,30 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
             var i: usize = 0;
             while (i < samples_count) : (i += 1) {
                 switch (bits) {
-                    .u8 => {
+                    8 => {
                         const val = data[i];
                         samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(u8);
                     },
-                    .i16 => {
+                    16 => {
                         const bytes_number = 2; // A i16 wave data's sample takes 2
                         const val = std.mem.readInt(i16, data[i * bytes_number .. (i + 1) * bytes_number][0..2], .little);
                         samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i16);
                     },
-                    .i24 => {
+                    24 => {
                         const bytes_number = 3; // A i24 wave data's sample takes 3
                         const val = std.mem.readInt(i24, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
                         samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i24);
                     },
-                    .i32 => {
-                        const bytes_number = 4; // A i32 wave data's sample takes 4
-                        const val = std.mem.readInt(i32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
-                        samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i32);
+                    32 => switch (format_code) {
+                        .pcm => {
+                            const bytes_number = 4; // A i32 wave data's sample takes 4
+                            const val = std.mem.readInt(i32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
+                            samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i32);
+                        },
+                        .ieee_float => return error.NotImplemented,
+                        else => return error.UnsupportedFormatCode,
                     },
+                    else => return error.UnsupportedBits,
                 }
             }
 
@@ -99,6 +98,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
     }
 
     return Wave{
+        .format_code = format_code,
         .sample_rate = sample_rate,
         .channels = channels,
         .bits = bits,
@@ -114,9 +114,10 @@ test "read 8bit_pcm.wav" {
     const result: Wave = try read(allocator, &reader);
     defer result.deinit(allocator);
 
+    try std.testing.expectEqual(.pcm, result.format_code);
     try std.testing.expectEqual(44100, result.sample_rate);
     try std.testing.expectEqual(1, result.channels);
-    try std.testing.expectEqual(.u8, result.bits);
+    try std.testing.expectEqual(8, result.bits);
 
     const expected_samples = &[_]f128{
         0.498039215686274509803921568627451,
@@ -141,9 +142,10 @@ test "read 16bit_pcm.wav" {
     const result: Wave = try read(allocator, &reader);
     defer result.deinit(allocator);
 
+    try std.testing.expectEqual(.pcm, result.format_code);
     try std.testing.expectEqual(44100, result.sample_rate);
     try std.testing.expectEqual(1, result.channels);
-    try std.testing.expectEqual(.i16, result.bits);
+    try std.testing.expectEqual(16, result.bits);
 
     const expected_samples = &[_]f128{
         0.000030518509475997192297128208258308664,
@@ -168,9 +170,10 @@ test "read 24bit_pcm.wav" {
     const result: Wave = try read(allocator, &reader);
     defer result.deinit(allocator);
 
+    try std.testing.expectEqual(.pcm, result.format_code);
     try std.testing.expectEqual(44100, result.sample_rate);
     try std.testing.expectEqual(1, result.channels);
-    try std.testing.expectEqual(.i24, result.bits);
+    try std.testing.expectEqual(24, result.bits);
 
     const expected_samples = &[_]f128{
         0,
@@ -195,9 +198,10 @@ test "read 32bit_pcm.wav" {
     const result: Wave = try read(allocator, &reader);
     defer result.deinit(allocator);
 
+    try std.testing.expectEqual(.pcm, result.format_code);
     try std.testing.expectEqual(44100, result.sample_rate);
     try std.testing.expectEqual(1, result.channels);
-    try std.testing.expectEqual(.i32, result.bits);
+    try std.testing.expectEqual(32, result.bits);
 
     const expected_samples = &[_]f128{
         0,
