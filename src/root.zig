@@ -6,14 +6,7 @@ pub const Bits = enum {
     u8,
     i16,
     i24,
-    f32,
-
-    pub fn to_format_code(bits: Bits) FormatCode {
-        return switch (bits) {
-            .u8, .i16, .i24 => .pcm,
-            .f32 => .ieee_float,
-        };
-    }
+    i32,
 };
 
 /// Audio encoding format
@@ -28,7 +21,7 @@ pub const Wave = struct {
     sample_rate: u32,
     channels: u16,
     bits: Bits,
-    samples: []f32,
+    samples: []f128,
 
     pub fn deinit(self: Wave, allocator: std.mem.Allocator) void {
         allocator.free(self.samples);
@@ -47,7 +40,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
     var sample_rate: u32 = undefined;
     var channels: u16 = undefined;
     var bits: Bits = undefined;
-    var samples: []f32 = undefined;
+    var samples: []f128 = undefined;
 
     for (r.chunks) |c| {
         const id = c.chunk.four_cc.inner;
@@ -61,7 +54,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                 8 => .u8,
                 16 => .i16,
                 24 => .i24,
-                32 => .f32,
+                32 => .i32,
                 else => return error.UnsupportedBitDepth,
             };
         } else if (std.mem.eql(u8, &id, "data")) {
@@ -71,9 +64,9 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                 .u8 => data.len,
                 .i16 => data.len / 2,
                 .i24 => data.len / 3,
-                else => return error.NotImplemented,
+                .i32 => data.len / 4,
             };
-            var samples_list: []f32 = try allocator.alloc(f32, samples_count);
+            var samples_list: []f128 = try allocator.alloc(f128, samples_count);
             errdefer allocator.free(samples_list);
 
             var i: usize = 0;
@@ -81,19 +74,23 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                 switch (bits) {
                     .u8 => {
                         const val = data[i];
-                        samples_list[i] = @as(f32, @floatFromInt(val)) / std.math.maxInt(u8);
+                        samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(u8);
                     },
                     .i16 => {
                         const bytes_number = 2; // A i16 wave data's sample takes 2
                         const val = std.mem.readInt(i16, data[i * bytes_number .. (i + 1) * bytes_number][0..2], .little);
-                        samples_list[i] = @as(f32, @floatFromInt(val)) / std.math.maxInt(i16);
+                        samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i16);
                     },
                     .i24 => {
                         const bytes_number = 3; // A i24 wave data's sample takes 3
                         const val = std.mem.readInt(i24, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
-                        samples_list[i] = @as(f32, @floatFromInt(val)) / std.math.maxInt(i24);
+                        samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i24);
                     },
-                    else => return error.NotImplemented,
+                    .i32 => {
+                        const bytes_number = 4; // A i32 wave data's sample takes 4
+                        const val = std.mem.readInt(i32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
+                        samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i32);
+                    },
                 }
             }
 
@@ -121,19 +118,19 @@ test "read 8bit_pcm.wav" {
     try std.testing.expectEqual(1, result.channels);
     try std.testing.expectEqual(.u8, result.bits);
 
-    const expected_samples = &[_]f32{
-        0.49803922,
-        0.5254902,
-        0.54901963,
-        0.5764706,
+    const expected_samples = &[_]f128{
+        0.498039215686274509803921568627451,
+        0.52549019607843137254901960784313725,
+        0.5490196078431372549019607843137255,
+        0.57647058823529411764705882352941175,
         0.6,
-        0.62352943,
-        0.64705884,
-        0.67058825,
-        0.69411767,
-        0.7137255,
+        0.6235294117647058823529411764705882,
+        0.6470588235294117647058823529411764,
+        0.6705882352941176470588235294117647,
+        0.6941176470588235294117647058823529,
+        0.7137254901960784313725490196078431,
     };
-    try std.testing.expectEqualSlices(f32, expected_samples, result.samples);
+    try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
 }
 
 test "read 16bit_pcm.wav" {
@@ -148,19 +145,19 @@ test "read 16bit_pcm.wav" {
     try std.testing.expectEqual(1, result.channels);
     try std.testing.expectEqual(.i16, result.bits);
 
-    const expected_samples = &[_]f32{
-        0.00003051851,
-        0.050050355,
-        0.10010071,
-        0.1495407,
-        0.19855343,
-        0.24668111,
-        0.2938322,
-        0.33994567,
-        0.38459426,
-        0.42780846,
+    const expected_samples = &[_]f128{
+        0.000030518509475997192297128208258308664,
+        0.05005035554063539536729026154362621,
+        0.10010071108127079073458052308725242,
+        0.14954069643238624225592822046571245,
+        0.19855342265083773308511612292855616,
+        0.24668111209448530533768730735190894,
+        0.2938322092349009674367503891109958,
+        0.3399456770531327249977111117893002,
+        0.3845942564165166173284096804712058,
+        0.42780846583452864162114322336497085,
     };
-    try std.testing.expectEqualSlices(f32, expected_samples, result.samples);
+    try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
 }
 
 test "read 24bit_pcm.wav" {
@@ -175,17 +172,44 @@ test "read 24bit_pcm.wav" {
     try std.testing.expectEqual(1, result.channels);
     try std.testing.expectEqual(.i24, result.bits);
 
-    const expected_samples = &[_]f32{
+    const expected_samples = &[_]f128{
         0,
-        0.050118692,
-        0.10004033,
-        0.1495694,
-        0.19851008,
-        0.2466717,
-        0.29386356,
-        0.33990148,
-        0.38460356,
-        0.42779523,
+        0.050118690743290274535450283938680163,
+        0.1000403285074625620201303982890127,
+        0.1495694100343477766928406587649177,
+        0.19851007443786554787940357677979192,
+        0.24667170604130101696264946015470744,
+        0.2938635699586355636877493486105619,
+        0.3399014878155574578711340273778471,
+        0.38460354621452644044476037559036917,
+        0.4277952227348354738754598945927494,
     };
-    try std.testing.expectEqualSlices(f32, expected_samples, result.samples);
+    try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
+}
+
+test "read 32bit_pcm.wav" {
+    const allocator = std.testing.allocator;
+
+    const wavedata = @embedFile("./assets/32bit_pcm.wav");
+    var reader = std.Io.Reader.fixed(wavedata);
+    const result: Wave = try read(allocator, &reader);
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqual(44100, result.sample_rate);
+    try std.testing.expectEqual(1, result.channels);
+    try std.testing.expectEqual(.i32, result.bits);
+
+    const expected_samples = &[_]f128{
+        0,
+        0.050118658714982987714457785577726453,
+        0.10004042093643938234841422287207759,
+        0.14956915385535413113206351694281378,
+        0.1985102743834770630968162152435706,
+        0.2466715277389956301725449181033973,
+        0.29386368407582104395880412494708046,
+        0.33990132824513191741198856263048415,
+        0.38460361975459550495939119949908516,
+        0.427794963320621737893960316616092,
+    };
+    try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
 }
