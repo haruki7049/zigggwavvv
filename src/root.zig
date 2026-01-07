@@ -277,7 +277,14 @@ pub fn write(wave: Wave, writer: anytype, allocator: std.mem.Allocator) anyerror
                 },
                 else => return error.UnsupportedFormatCode,
             },
-            else => return error.TODO,
+            32 => switch (wave.format_code) {
+                .pcm => {
+                    const val: i32 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32) - 1));
+                    try dw.writeInt(i32, val, .little);
+                },
+                else => return error.UnsupportedFormatCode,
+            },
+            else => return error.UnsupportedBits,
         }
     }
 
@@ -381,5 +388,36 @@ test "write 24bit_pcm.wav" {
     try write(result, &w.writer, allocator);
 
     const expected = @embedFile("./assets/24bit_pcm.wav");
+    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+}
+
+test "write 32bit_pcm.wav" {
+    const allocator = std.testing.allocator;
+
+    var samples = [_]f128{
+        0,
+        0.050118658714982987714457785577726453,
+        0.10004042093643938234841422287207759,
+        0.14956915385535413113206351694281378,
+        0.1985102743834770630968162152435706,
+        0.2466715277389956301725449181033973,
+        0.29386368407582104395880412494708046,
+        0.33990132824513191741198856263048415,
+        0.38460361975459550495939119949908516,
+        0.427794963320621737893960316616092,
+    };
+    const result: Wave = Wave{
+        .format_code = .pcm,
+        .sample_rate = 44100,
+        .channels = 1,
+        .bits = 32,
+        .samples = &samples,
+    };
+
+    var w = std.Io.Writer.Allocating.init(allocator);
+    defer w.deinit();
+    try write(result, &w.writer, allocator);
+
+    const expected = @embedFile("./assets/32bit_pcm.wav");
     try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
 }
