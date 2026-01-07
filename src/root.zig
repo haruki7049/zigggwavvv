@@ -50,10 +50,10 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
             const data = c.chunk.data;
 
             const samples_count = switch (bits) {
-                8 => data.len, // 8bit PCM
-                16 => data.len / 2, // 16bit PCM
-                24 => data.len / 3, // 24bit PCM
-                32 => data.len / 4,
+                8 => data.len, // 8bit
+                16 => data.len / 2, // 16bit
+                24 => data.len / 3, // 24bit
+                32 => data.len / 4, // 32bit
                 else => return error.UnsupportedBits,
             };
             var samples_list: []f128 = try allocator.alloc(f128, samples_count);
