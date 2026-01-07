@@ -20,7 +20,7 @@ pub const Bits = enum {
 pub const FormatCode = enum(u16) {
     pcm = 1,
     ieee_float = 3,
-    _,
+    _, // Unsupported
 };
 
 /// WAV structure representing audio properties and normalized samples
