@@ -72,19 +72,28 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
 
             for (0..samples_count) |i| {
                 switch (bits) {
-                    8 => {
-                        const val: u8 = data[i];
-                        samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(u8);
+                    8 => switch (format_code) {
+                        .pcm => {
+                            const val: u8 = data[i];
+                            samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(u8);
+                        },
+                        else => return error.UnsupportedFormatCode,
                     },
-                    16 => {
-                        const bytes_number = 2; // A i16 wave data's sample takes 2
-                        const val: i16 = std.mem.readInt(i16, data[i * bytes_number .. (i + 1) * bytes_number][0..2], .little);
-                        samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i16);
+                    16 => switch (format_code) {
+                        .pcm => {
+                            const bytes_number = 2; // A i16 wave data's sample takes 2
+                            const val: i16 = std.mem.readInt(i16, data[i * bytes_number .. (i + 1) * bytes_number][0..2], .little);
+                            samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i16);
+                        },
+                        else => return error.UnsupportedFormatCode,
                     },
-                    24 => {
-                        const bytes_number = 3; // A i24 wave data's sample takes 3
-                        const val: i24 = std.mem.readInt(i24, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
-                        samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i24);
+                    24 => switch (format_code) {
+                        .pcm => {
+                            const bytes_number = 3; // A i24 wave data's sample takes 3
+                            const val: i24 = std.mem.readInt(i24, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
+                            samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i24);
+                        },
+                        else => return error.UnsupportedFormatCode,
                     },
                     32 => switch (format_code) {
                         .pcm => {
