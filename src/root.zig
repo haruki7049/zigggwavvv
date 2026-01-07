@@ -65,7 +65,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                 16 => data.len / 2, // 16bit
                 24 => data.len / 3, // 24bit
                 32 => data.len / 4, // 32bit
-                64 => data.len / 8,
+                64 => data.len / 8, // 64bit
                 else => unreachable,
             };
             var samples_list: []f128 = try allocator.alloc(f128, samples_count);
