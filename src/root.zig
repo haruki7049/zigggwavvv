@@ -314,3 +314,34 @@ test "write 8bit_pcm.wav" {
     const expected = @embedFile("./assets/8bit_pcm.wav");
     try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
 }
+
+test "write 16bit_pcm.wav" {
+    const allocator = std.testing.allocator;
+
+    var samples = [_]f128{
+        0.000030518509475997192297128208258308664,
+        0.05005035554063539536729026154362621,
+        0.10010071108127079073458052308725242,
+        0.14954069643238624225592822046571245,
+        0.19855342265083773308511612292855616,
+        0.24668111209448530533768730735190894,
+        0.2938322092349009674367503891109958,
+        0.3399456770531327249977111117893002,
+        0.3845942564165166173284096804712058,
+        0.42780846583452864162114322336497085,
+    };
+    const result: Wave = Wave{
+        .format_code = .pcm,
+        .sample_rate = 44100,
+        .channels = 1,
+        .bits = 16,
+        .samples = &samples,
+    };
+
+    var w = std.Io.Writer.Allocating.init(allocator);
+    defer w.deinit();
+    try write(result, &w.writer, allocator);
+
+    const expected = @embedFile("./assets/16bit_pcm.wav");
+    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+}
