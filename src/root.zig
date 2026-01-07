@@ -45,6 +45,17 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
             channels = std.mem.readInt(u16, data[2..4], .little);
             sample_rate = std.mem.readInt(u32, data[4..8], .little);
             bits = std.mem.readInt(u16, data[14..16], .little);
+
+            // We only support PCM
+            if (format_code != .pcm)
+                return error.UnsupportedFormatCode;
+
+            // We only support 8, 16, 24 and 32 bits
+            const supported_bits: []const u16 = &[_]u16{ 8, 16, 24, 32 };
+            for (supported_bits) |v| {
+                if (v == bits)
+                    break;
+            } else return error.UnsupportedBits;
         } else if (std.mem.eql(u8, &id, "data")) {
             const data = c.chunk.data;
 
@@ -53,7 +64,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                 16 => data.len / 2, // 16bit
                 24 => data.len / 3, // 24bit
                 32 => data.len / 4, // 32bit
-                else => return error.UnsupportedBits,
+                else => unreachable,
             };
             var samples_list: []f128 = try allocator.alloc(f128, samples_count);
             errdefer allocator.free(samples_list);
@@ -80,9 +91,9 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                             const val: i32 = std.mem.readInt(i32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
                             samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i32);
                         },
-                        else => return error.UnsupportedFormatCode,
+                        else => unreachable,
                     },
-                    else => return error.UnsupportedBits,
+                    else => unreachable,
                 }
             }
 
@@ -228,7 +239,7 @@ test "Fail to read 64bit_ieee_float.wav" {
     var reader = std.Io.Reader.fixed(wavedata);
     const result = read(allocator, &reader);
 
-    try std.testing.expectError(error.UnsupportedBits, result);
+    try std.testing.expectError(error.UnsupportedFormatCode, result);
 }
 
 pub fn write(wave: Wave, writer: anytype, allocator: std.mem.Allocator) anyerror!void {
