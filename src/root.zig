@@ -414,6 +414,13 @@ pub fn write(wave: Wave, writer: anytype, options: WriteOptions) anyerror!void {
                     },
                     else => return error.UnsupportedFormatCode,
                 },
+                64 => switch (wave.format_code) {
+                    .ieee_float => {
+                        const val: f64 = @floatCast(s);
+                        try dw.writeInt(u64, @bitCast(val), .little);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
                 else => return error.UnsupportedBits,
             }
         }
@@ -596,5 +603,41 @@ test "write 32bit_ieee_float.wav" {
     });
 
     const expected = @embedFile("./assets/32bit_ieee_float.wav");
+    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+}
+
+test "write 64bit_ieee_float.wav" {
+    const allocator = std.testing.allocator;
+
+    var samples = [_]f128{
+        0,
+        0.0501186586916446685791015625,
+        0.10004042088985443115234375,
+        0.14956915378570556640625,
+        0.19851027429103851318359375,
+        0.2466715276241302490234375,
+        0.2938636839389801025390625,
+        0.33990132808685302734375,
+        0.38460361957550048828125,
+        0.4277949631214141845703125,
+    };
+    const result: Wave = Wave{
+        .format_code = .ieee_float,
+        .sample_rate = 44100,
+        .channels = 1,
+        .bits = 64,
+        .samples = &samples,
+    };
+
+    var w = std.Io.Writer.Allocating.init(allocator);
+    defer w.deinit();
+    try write(result, &w.writer, .{
+        .allocator = allocator,
+        .use_fact = true,
+        .use_peak = true,
+        .peak_timestamp = 0x695DE11A,
+    });
+
+    const expected = @embedFile("./assets/64bit_ieee_float.wav");
     try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
 }
