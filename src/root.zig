@@ -4,6 +4,7 @@ const riff = @import("riff");
 /// Audio encoding format
 pub const FormatCode = enum(u16) {
     pcm = 1,
+    ieee_float = 3,
     _, // Unsupported
 };
 
@@ -46,8 +47,8 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
             sample_rate = std.mem.readInt(u32, data[4..8], .little);
             bits = std.mem.readInt(u16, data[14..16], .little);
 
-            // We only support PCM
-            if (format_code != .pcm)
+            // We only support PCM and IEEE Float
+            if (format_code != .pcm and format_code != .ieee_float)
                 return error.UnsupportedFormatCode;
 
             // We only support 8, 16, 24 and 32 bits
@@ -90,6 +91,11 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                             const bytes_number = 4; // A i32 wave data's sample takes 4
                             const val: i32 = std.mem.readInt(i32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
                             samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i32);
+                        },
+                        .ieee_float => {
+                            const bytes_number = 4;
+                            const val: f32 = @bitCast(std.mem.readInt(u32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little));
+                            samples_list[i] = @as(f128, val);
                         },
                         else => unreachable,
                     },
@@ -222,14 +228,32 @@ test "read 32bit_pcm.wav" {
     try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
 }
 
-test "Fail to read 32bit_ieee_float.wav" {
+test "read 32bit_ieee_float.wav" {
     const allocator = std.testing.allocator;
 
     const wavedata = @embedFile("./assets/32bit_ieee_float.wav");
     var reader = std.Io.Reader.fixed(wavedata);
-    const result = read(allocator, &reader);
+    const result = try read(allocator, &reader);
+    defer result.deinit(allocator);
 
-    try std.testing.expectError(error.UnsupportedFormatCode, result);
+    try std.testing.expectEqual(.ieee_float, result.format_code);
+    try std.testing.expectEqual(44100, result.sample_rate);
+    try std.testing.expectEqual(1, result.channels);
+    try std.testing.expectEqual(32, result.bits);
+
+    const expected_samples = &[_]f128{
+        0,
+        0.0501186586916446685791015625,
+        0.10004042088985443115234375,
+        0.14956915378570556640625,
+        0.19851027429103851318359375,
+        0.2466715276241302490234375,
+        0.2938636839389801025390625,
+        0.33990132808685302734375,
+        0.38460361957550048828125,
+        0.4277949631214141845703125,
+    };
+    try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
 }
 
 test "Fail to read 64bit_ieee_float.wav" {
@@ -239,7 +263,7 @@ test "Fail to read 64bit_ieee_float.wav" {
     var reader = std.Io.Reader.fixed(wavedata);
     const result = read(allocator, &reader);
 
-    try std.testing.expectError(error.UnsupportedFormatCode, result);
+    try std.testing.expectError(error.UnsupportedBits, result);
 }
 
 pub fn write(wave: Wave, writer: anytype, allocator: std.mem.Allocator) anyerror!void {
