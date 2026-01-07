@@ -295,4 +295,7 @@ test "write 8bit_pcm.wav" {
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
     try write(result, &w.writer, allocator);
+
+    const expected = @embedFile("./assets/8bit_pcm.wav");
+    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
 }
