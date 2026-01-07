@@ -35,17 +35,12 @@ pub const Wave = struct {
     }
 };
 
-pub const FromBytesError = riff.Error || error{
-    InvalidFormat,
-    NotImplemented,
-};
-
-pub fn from_bytes(allocator: std.mem.Allocator, bytes: []const u8) FromBytesError!Wave {
-    const root_chunk = try riff.from_slice(allocator, bytes);
+pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
+    const root_chunk = try riff.read(allocator, reader);
     defer root_chunk.deinit(allocator);
 
     const r = switch (root_chunk) {
-        .riff => |r| if (std.mem.eql(u8, &r.four_cc, "WAVE")) r else return error.InvalidFormat,
+        .riff => |r| if (std.mem.eql(u8, &r.four_cc.inner, "WAVE")) r else return error.InvalidFormat,
         else => return error.InvalidFormat,
     };
 
@@ -55,7 +50,7 @@ pub fn from_bytes(allocator: std.mem.Allocator, bytes: []const u8) FromBytesErro
     var samples: []f32 = undefined;
 
     for (r.chunks) |c| {
-        const id = c.chunk.four_cc;
+        const id = c.chunk.four_cc.inner;
 
         if (std.mem.eql(u8, &id, "fmt ")) {
             const data = c.chunk.data;
@@ -80,8 +75,8 @@ pub fn from_bytes(allocator: std.mem.Allocator, bytes: []const u8) FromBytesErro
 
             var i: usize = 0;
             while (i < samples_count) : (i += 1) {
-                const val = std.mem.readInt();
-                samples_list[i] = @floatFromInt(val);
+                const val = std.mem.readInt(i16, data[i * 2 .. (i + 1) * 2][0..2], .little);
+                samples_list[i] = @as(f32, @floatFromInt(val)) / 32768.0;
             }
 
             samples = samples_list;
@@ -94,4 +89,20 @@ pub fn from_bytes(allocator: std.mem.Allocator, bytes: []const u8) FromBytesErro
         .bits = bits,
         .samples = samples,
     };
+}
+
+test "read i16_pcm.wav" {
+    const allocator = std.testing.allocator;
+
+    const wavedata = @embedFile("./assets/i16_pcm.wav");
+    var reader = std.Io.Reader.fixed(wavedata);
+    const result: Wave = try read(allocator, &reader);
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqual(44100, result.sample_rate);
+    try std.testing.expectEqual(1, result.channels);
+    try std.testing.expectEqual(.i16, result.bits);
+
+    const expected_samples = &[_]f32{ 0.000030517578, 0.050048828, 0.100097656, 0.14953613, 0.19854736, 0.24667358, 0.29382324, 0.3399353, 0.38458252, 0.4277954 };
+    try std.testing.expectEqualSlices(f32, expected_samples, result.samples);
 }
