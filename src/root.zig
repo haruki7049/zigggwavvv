@@ -232,4 +232,67 @@ test "Fail to read 64bit_ieee_float.wav" {
     try std.testing.expectError(error.UnsupportedBits, result);
 }
 
-pub fn write(self: Wave, writer: anytype) anyerror!void {}
+pub fn write(wave: Wave, writer: anytype, allocator: std.mem.Allocator) anyerror!void {
+    const bits_per_sample: u16 = wave.bits;
+    const block_align = wave.channels * (bits_per_sample / 8);
+    const bytes_per_sec = wave.sample_rate * block_align;
+
+    // Wave fmt chunk
+    var fmt_payload = std.Io.Writer.Allocating.init(allocator);
+    defer fmt_payload.deinit();
+    const fw = &fmt_payload.writer;
+
+    try fw.writeInt(u16, @intFromEnum(wave.format_code), .little);
+    try fw.writeInt(u16, wave.channels, .little);
+    try fw.writeInt(u32, wave.sample_rate, .little);
+    try fw.writeInt(u32, bytes_per_sec, .little);
+    try fw.writeInt(u16, block_align, .little);
+    try fw.writeInt(u16, bits_per_sample, .little);
+
+    // Wave data chunk
+    var data_payload = std.Io.Writer.Allocating.init(allocator);
+    defer data_payload.deinit();
+    const dw = &data_payload.writer;
+
+    for (wave.samples) |s| {
+        const val: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16) - 1));
+        try dw.writeInt(i16, val, .little);
+    }
+
+    const chunks = try allocator.alloc(riff.Chunk, 2);
+    chunks[0] = .{ .chunk = .{ .four_cc = try riff.FourCC.new("fmt "), .data = try allocator.dupe(u8, fmt_payload.written()) } };
+    chunks[0] = .{ .chunk = .{ .four_cc = try riff.FourCC.new("data"), .data = try allocator.dupe(u8, data_payload.written()) } };
+
+    const wave_riff = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = chunks } };
+    defer wave_riff.deinit(allocator);
+
+    try riff.write(wave_riff, allocator, writer);
+}
+
+test "write 8bit_pcm.wav" {
+    const allocator = std.testing.allocator;
+
+    var samples = [_]f128{
+        0.498039215686274509803921568627451,
+        0.52549019607843137254901960784313725,
+        0.5490196078431372549019607843137255,
+        0.57647058823529411764705882352941175,
+        0.6,
+        0.6235294117647058823529411764705882,
+        0.6470588235294117647058823529411764,
+        0.6705882352941176470588235294117647,
+        0.6941176470588235294117647058823529,
+        0.7137254901960784313725490196078431,
+    };
+    const result: Wave = Wave{
+        .format_code = .pcm,
+        .sample_rate = 44100,
+        .channels = 1,
+        .bits = 8,
+        .samples = &samples,
+    };
+
+    var w = std.Io.Writer.Allocating.init(allocator);
+    defer w.deinit();
+    try write(result, &w.writer, allocator);
+}
