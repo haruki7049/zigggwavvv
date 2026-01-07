@@ -62,23 +62,23 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
             while (i < samples_count) : (i += 1) {
                 switch (bits) {
                     8 => {
-                        const val = data[i];
+                        const val: u8 = data[i];
                         samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(u8);
                     },
                     16 => {
                         const bytes_number = 2; // A i16 wave data's sample takes 2
-                        const val = std.mem.readInt(i16, data[i * bytes_number .. (i + 1) * bytes_number][0..2], .little);
+                        const val: i16 = std.mem.readInt(i16, data[i * bytes_number .. (i + 1) * bytes_number][0..2], .little);
                         samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i16);
                     },
                     24 => {
                         const bytes_number = 3; // A i24 wave data's sample takes 3
-                        const val = std.mem.readInt(i24, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
+                        const val: i24 = std.mem.readInt(i24, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
                         samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i24);
                     },
                     32 => switch (format_code) {
                         .pcm => {
                             const bytes_number = 4; // A i32 wave data's sample takes 4
-                            const val = std.mem.readInt(i32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
+                            const val: i32 = std.mem.readInt(i32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
                             samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i32);
                         },
                         else => return error.UnsupportedFormatCode,
@@ -270,6 +270,13 @@ pub fn write(wave: Wave, writer: anytype, allocator: std.mem.Allocator) anyerror
                 },
                 else => return error.UnsupportedFormatCode,
             },
+            24 => switch (wave.format_code) {
+                .pcm => {
+                    const val: i24 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24) - 1));
+                    try dw.writeInt(i24, val, .little);
+                },
+                else => return error.UnsupportedFormatCode,
+            },
             else => return error.TODO,
         }
     }
@@ -343,5 +350,36 @@ test "write 16bit_pcm.wav" {
     try write(result, &w.writer, allocator);
 
     const expected = @embedFile("./assets/16bit_pcm.wav");
+    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+}
+
+test "write 24bit_pcm.wav" {
+    const allocator = std.testing.allocator;
+
+    var samples = [_]f128{
+        0,
+        0.050118690743290274535450283938680163,
+        0.1000403285074625620201303982890127,
+        0.1495694100343477766928406587649177,
+        0.19851007443786554787940357677979192,
+        0.24667170604130101696264946015470744,
+        0.2938635699586355636877493486105619,
+        0.3399014878155574578711340273778471,
+        0.38460354621452644044476037559036917,
+        0.4277952227348354738754598945927494,
+    };
+    const result: Wave = Wave{
+        .format_code = .pcm,
+        .sample_rate = 44100,
+        .channels = 1,
+        .bits = 24,
+        .samples = &samples,
+    };
+
+    var w = std.Io.Writer.Allocating.init(allocator);
+    defer w.deinit();
+    try write(result, &w.writer, allocator);
+
+    const expected = @embedFile("./assets/24bit_pcm.wav");
     try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
 }
