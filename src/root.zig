@@ -213,3 +213,23 @@ test "read 32bit_pcm.wav" {
     };
     try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
 }
+
+test "Fail to read 32bit_ieee_float.wav" {
+    const allocator = std.testing.allocator;
+
+    const wavedata = @embedFile("./assets/32bit_ieee_float.wav");
+    var reader = std.Io.Reader.fixed(wavedata);
+    const result = read(allocator, &reader);
+
+    try std.testing.expectError(error.NotImplemented, result);
+}
+
+test "Fail to read 64bit_ieee_float.wav" {
+    const allocator = std.testing.allocator;
+
+    const wavedata = @embedFile("./assets/64bit_ieee_float.wav");
+    var reader = std.Io.Reader.fixed(wavedata);
+    const result = read(allocator, &reader);
+
+    try std.testing.expectError(error.UnsupportedBits, result);
+}
