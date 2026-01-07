@@ -231,3 +231,5 @@ test "Fail to read 64bit_ieee_float.wav" {
 
     try std.testing.expectError(error.UnsupportedBits, result);
 }
+
+pub fn write(self: Wave, writer: anytype) anyerror!void {}
