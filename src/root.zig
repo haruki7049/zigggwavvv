@@ -255,8 +255,23 @@ pub fn write(wave: Wave, writer: anytype, allocator: std.mem.Allocator) anyerror
     const dw = &data_payload.writer;
 
     for (wave.samples) |s| {
-        const val: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16) - 1));
-        try dw.writeInt(i16, val, .little);
+        switch (wave.bits) {
+            8 => switch (wave.format_code) {
+                .pcm => {
+                    const val: u8 = @intFromFloat(std.math.clamp(s * std.math.maxInt(u8), -std.math.maxInt(u8), std.math.maxInt(u8) - 1));
+                    try dw.writeInt(u8, val, .little);
+                },
+                else => return error.UnsupportedFormatCode,
+            },
+            16 => switch (wave.format_code) {
+                .pcm => {
+                    const val: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16) - 1));
+                    try dw.writeInt(i16, val, .little);
+                },
+                else => return error.UnsupportedFormatCode,
+            },
+            else => return error.TODO,
+        }
     }
 
     const chunks = try allocator.alloc(riff.Chunk, 2);
