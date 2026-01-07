@@ -4,7 +4,6 @@ const riff = @import("riff");
 /// Audio encoding format
 pub const FormatCode = enum(u16) {
     pcm = 1,
-    ieee_float = 3,
     _, // Unsupported
 };
 
@@ -82,7 +81,6 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                             const val = std.mem.readInt(i32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
                             samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i32);
                         },
-                        .ieee_float => return error.NotImplemented,
                         else => return error.UnsupportedFormatCode,
                     },
                     else => return error.UnsupportedBits,
@@ -221,7 +219,7 @@ test "Fail to read 32bit_ieee_float.wav" {
     var reader = std.Io.Reader.fixed(wavedata);
     const result = read(allocator, &reader);
 
-    try std.testing.expectError(error.NotImplemented, result);
+    try std.testing.expectError(error.UnsupportedFormatCode, result);
 }
 
 test "Fail to read 64bit_ieee_float.wav" {
