@@ -1,3 +1,27 @@
+//! zigggwavvv - A Zig library for reading and writing WAV audio files
+//!
+//! This library provides functionality to parse and generate WAV (Waveform Audio File Format)
+//! files using the RIFF container format. It supports both PCM and IEEE float audio formats
+//! with various bit depths (8, 16, 24, 32, and 64-bit).
+//!
+//! The library normalizes all audio samples to f128 for consistent processing, regardless
+//! of the original format and bit depth.
+//!
+//! ## Main Features
+//! - Read WAV files with `read()` function
+//! - Write WAV files with `write()` function
+//! - Support for PCM format (8, 16, 24, 32-bit)
+//! - Support for IEEE float format (32, 64-bit)
+//! - Normalized f128 sample representation
+//! - Optional fact and PEAK chunk generation for writing
+//!
+//! ## Example Usage
+//! ```zig
+//! const wave = try read(allocator, reader);
+//! defer wave.deinit(allocator);
+//! // Process wave.samples...
+//! ```
+
 const std = @import("std");
 const riff = @import("riff");
 
@@ -16,11 +40,29 @@ pub const Wave = struct {
     bits: u16,
     samples: []f128,
 
+    /// Deinitializes the Wave structure and frees the allocated samples memory
     pub fn deinit(self: Wave, allocator: std.mem.Allocator) void {
         allocator.free(self.samples);
     }
 };
 
+/// Reads a WAV file from the provided reader and returns a Wave structure.
+///
+/// This function parses the RIFF/WAVE file format and extracts audio data,
+/// converting samples to normalized f128 values. Supports PCM and IEEE float formats
+/// with 8, 16, 24, 32, and 64-bit sample depths.
+///
+/// Parameters:
+///   - allocator: Memory allocator for sample data
+///   - reader: Reader interface providing the WAV file data
+///
+/// Returns:
+///   - Wave structure containing the parsed audio data
+///
+/// Errors:
+///   - InvalidFormat: Not a valid WAVE file
+///   - UnsupportedFormatCode: Audio format not supported
+///   - UnsupportedBits: Bit depth not supported
 pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
     const root_chunk = try riff.read(allocator, reader);
     defer root_chunk.deinit(allocator);
@@ -302,13 +344,33 @@ test "read 64bit_ieee_float.wav" {
     try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
 }
 
+/// Options for writing WAV files
 pub const WriteOptions = struct {
+    /// Memory allocator for temporary buffers during writing
     allocator: std.mem.Allocator,
+    /// Include 'fact' chunk in the output (typically used for non-PCM formats)
     use_fact: bool = false,
+    /// Include 'PEAK' chunk containing peak amplitude information
     use_peak: bool = false,
+    /// Timestamp for the PEAK chunk (Unix time or 0)
     peak_timestamp: u32 = 0,
 };
 
+/// Writes a Wave structure to a WAV file format.
+///
+/// This function converts the normalized f128 samples back to the format specified
+/// by the Wave structure's fields (format_code, bits, channels, sample_rate) and
+/// writes a complete RIFF/WAVE file with appropriate chunks (fmt, data, and
+/// optionally fact and PEAK chunks).
+///
+/// Parameters:
+///   - wave: Wave structure containing the audio data to write
+///   - writer: Writer interface where the WAV file will be written
+///   - options: WriteOptions specifying allocator and optional chunks
+///
+/// Errors:
+///   - UnsupportedFormatCode: Audio format not supported for writing
+///   - UnsupportedBits: Bit depth not supported for writing
 pub fn write(wave: Wave, writer: anytype, options: WriteOptions) anyerror!void {
     var chunk_list: std.array_list.Aligned(riff.Chunk, null) = .empty;
 
