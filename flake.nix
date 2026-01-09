@@ -27,12 +27,15 @@
           zigggwavvv = pkgs.stdenv.mkDerivation {
             name = "zigggwavvv";
             src = lib.cleanSource ./.;
+            doCheck = true;
 
             nativeBuildInputs = [
               pkgs.zig_0_15.hook
             ];
 
-            doCheck = true;
+            postPatch = ''
+              ln -s ${pkgs.callPackage ./.deps.nix { }} $ZIG_GLOBAL_CACHE_DIR/p
+            '';
           };
         in
         {
