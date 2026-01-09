@@ -1,3 +1,27 @@
+//! zigggwavvv - A Zig library for reading and writing WAV audio files
+//!
+//! This library provides functionality to parse and generate WAV (Waveform Audio File Format)
+//! files using the RIFF container format. It supports both PCM and IEEE float audio formats
+//! with various bit depths (8, 16, 24, 32, and 64-bit).
+//!
+//! The library normalizes all audio samples to f128 for consistent processing, regardless
+//! of the original format and bit depth.
+//!
+//! ## Main Features
+//! - Read WAV files with `read()` function
+//! - Write WAV files with `write()` function
+//! - Support for PCM format (8, 16, 24, 32-bit)
+//! - Support for IEEE float format (32, 64-bit)
+//! - Normalized f128 sample representation
+//! - Optional fact and PEAK chunk generation for writing
+//!
+//! ## Example Usage
+//! ```zig
+//! const wave = try read(allocator, reader);
+//! defer wave.deinit(allocator);
+//! // Process wave.samples...
+//! ```
+
 const std = @import("std");
 const riff = @import("riff");
 
