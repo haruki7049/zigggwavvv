@@ -23,6 +23,18 @@
 
       perSystem =
         { pkgs, lib, ... }:
+        let
+          zigggwavvv = pkgs.stdenv.mkDerivation {
+            name = "zigggwavvv";
+            src = lib.cleanSource ./.;
+
+            nativeBuildInputs = [
+              pkgs.zig_0_15.hook
+            ];
+
+            doCheck = true;
+          };
+        in
         {
           treefmt = {
             projectRootFile = ".git/config";
@@ -39,6 +51,15 @@
 
             # Markdown
             programs.mdformat.enable = true;
+          };
+
+          packages = {
+            inherit zigggwavvv;
+            default = zigggwavvv;
+          };
+
+          checks = {
+            inherit zigggwavvv;
           };
 
           devShells.default = pkgs.mkShell {
