@@ -23,7 +23,7 @@ pub const Wave = struct {
 };
 
 /// Reads a WAV file from the provided reader and returns a Wave structure.
-/// 
+///
 /// This function parses the RIFF/WAVE file format and extracts audio data,
 /// converting samples to normalized f128 values. Supports PCM and IEEE float formats
 /// with 8, 16, 24, 32, and 64-bit sample depths.
@@ -334,8 +334,9 @@ pub const WriteOptions = struct {
 
 /// Writes a Wave structure to a WAV file format.
 ///
-/// This function converts the normalized f128 samples back to the specified format
-/// and writes a complete RIFF/WAVE file with appropriate chunks (fmt, data, and
+/// This function converts the normalized f128 samples back to the format specified
+/// by the Wave structure's fields (format_code, bits, channels, sample_rate) and
+/// writes a complete RIFF/WAVE file with appropriate chunks (fmt, data, and
 /// optionally fact and PEAK chunks).
 ///
 /// Parameters:
