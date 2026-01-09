@@ -32,10 +32,7 @@ Then in your `build.zig`:
 
 ```zig
 // Add zigggwavvv dependency
-const zigggwavvv = b.dependency("zigggwavvv", .{
-    .target = target,
-    .optimize = optimize,
-});
+const zigggwavvv = b.dependency("zigggwavvv", .{});
 // Import the module
 exe.root_module.addImport("zigggwavvv", zigggwavvv.module("zigggwavvv"));
 ```
