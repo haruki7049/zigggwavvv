@@ -6,8 +6,8 @@
 
 - **WAV Parsing and Generation**: Read and write WAV files using the RIFF container format.
 - **Wide Format Support**:
-- **PCM**: Support for 8, 16, 24, and 32-bit depths.
-- **IEEE Float**: Support for 32 and 64-bit depths.
+  - **PCM**: Support for 8, 16, 24, and 32-bit depths.
+  - **IEEE Float**: Support for 32 and 64-bit depths.
 - **Normalized Processing**: Automatically normalizes all audio samples to `f128` for consistent internal processing.
 - **Extended Chunk Support**: Optional generation of `fact` and `PEAK` chunks when writing files.
 
