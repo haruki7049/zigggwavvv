@@ -33,37 +33,60 @@ pub const FormatCode = enum(u16) {
 };
 
 /// WAV structure representing audio properties and normalized samples
-pub const Wave = struct {
-    format_code: FormatCode,
-    sample_rate: u32,
-    channels: u16,
-    bits: u16,
-    samples: []f128,
+pub fn Wave(comptime T: type) type {
+    return struct {
+        const Self = @This();
 
-    /// Deinitializes the Wave structure and frees the allocated samples memory
-    pub fn deinit(self: Wave, allocator: std.mem.Allocator) void {
-        allocator.free(self.samples);
-    }
-};
+        format_code: FormatCode,
+        sample_rate: u32,
+        channels: u16,
+        bits: u16,
+        samples: []T,
+
+        /// Deinitializes the Wave structure and frees the allocated samples memory
+        pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
+            allocator.free(self.samples);
+        }
+
+        pub const InitOptions = struct {
+            format_code: FormatCode,
+            sample_rate: u32,
+            channels: u16,
+            bits: u16,
+            samples: []T,
+        };
+
+        pub fn init(options: InitOptions) Self {
+            return .{
+                .format_code = options.format_code,
+                .sample_rate = options.sample_rate,
+                .channels = options.channels,
+                .bits = options.bits,
+                .samples = options.samples,
+            };
+        }
+    };
+}
 
 /// Reads a WAV file from the provided reader and returns a Wave structure.
 ///
 /// This function parses the RIFF/WAVE file format and extracts audio data,
-/// converting samples to normalized f128 values. Supports PCM and IEEE float formats
-/// with 8, 16, 24, 32, and 64-bit sample depths.
+/// converting samples to normalized values of the specified type T. Supports PCM
+/// and IEEE float formats with 8, 16, 24, 32, and 64-bit sample depths.
 ///
 /// Parameters:
 ///   - allocator: Memory allocator for sample data
+///   - T: Comptime type parameter specifying the sample data type (e.g., f32, f64, f128)
 ///   - reader: Reader interface providing the WAV file data
 ///
 /// Returns:
-///   - Wave structure containing the parsed audio data
+///   - Wave(T) structure containing the parsed audio data with samples of type T
 ///
 /// Errors:
 ///   - InvalidFormat: Not a valid WAVE file
 ///   - UnsupportedFormatCode: Audio format not supported
 ///   - UnsupportedBits: Bit depth not supported
-pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
+pub fn read(allocator: std.mem.Allocator, comptime T: type, reader: anytype) anyerror!Wave(T) {
     const root_chunk = try riff.read(allocator, reader);
     defer root_chunk.deinit(allocator);
 
@@ -76,7 +99,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
     var sample_rate: u32 = undefined;
     var channels: u16 = undefined;
     var bits: u16 = undefined;
-    var samples: []f128 = undefined;
+    var samples: []T = undefined;
 
     for (r.chunks) |c| {
         const id = c.chunk.four_cc.inner;
@@ -118,7 +141,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                     8 => switch (format_code) {
                         .pcm => {
                             const val: u8 = data[i];
-                            samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(u8);
+                            samples_list[i] = @as(T, @floatFromInt(val)) / std.math.maxInt(u8);
                         },
                         else => return error.UnsupportedFormatCode,
                     },
@@ -126,7 +149,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                         .pcm => {
                             const bytes_number = 2; // A i16 wave data's sample takes 2
                             const val: i16 = std.mem.readInt(i16, data[i * bytes_number .. (i + 1) * bytes_number][0..2], .little);
-                            samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i16);
+                            samples_list[i] = @as(T, @floatFromInt(val)) / std.math.maxInt(i16);
                         },
                         else => return error.UnsupportedFormatCode,
                     },
@@ -134,7 +157,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                         .pcm => {
                             const bytes_number = 3; // A i24 wave data's sample takes 3
                             const val: i24 = std.mem.readInt(i24, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
-                            samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i24);
+                            samples_list[i] = @as(T, @floatFromInt(val)) / std.math.maxInt(i24);
                         },
                         else => return error.UnsupportedFormatCode,
                     },
@@ -142,12 +165,12 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                         .pcm => {
                             const bytes_number = 4; // A i32 wave data's sample takes 4
                             const val: i32 = std.mem.readInt(i32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
-                            samples_list[i] = @as(f128, @floatFromInt(val)) / std.math.maxInt(i32);
+                            samples_list[i] = @as(T, @floatFromInt(val)) / std.math.maxInt(i32);
                         },
                         .ieee_float => {
                             const bytes_number = 4;
                             const val: f32 = @bitCast(std.mem.readInt(u32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little));
-                            samples_list[i] = @as(f128, val);
+                            samples_list[i] = @as(T, val);
                         },
                         else => return error.UnsupportedFormatCode,
                     },
@@ -155,7 +178,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
                         .ieee_float => {
                             const bytes_number = 8;
                             const val: f64 = @bitCast(std.mem.readInt(u64, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little));
-                            samples_list[i] = @as(f128, val);
+                            samples_list[i] = @as(T, val);
                         },
                         else => return error.UnsupportedFormatCode,
                     },
@@ -167,13 +190,13 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
         }
     }
 
-    return Wave{
+    return Wave(T).init(.{
         .format_code = format_code,
         .sample_rate = sample_rate,
         .channels = channels,
         .bits = bits,
         .samples = samples,
-    };
+    });
 }
 
 test "read 8bit_pcm.wav" {
@@ -181,7 +204,7 @@ test "read 8bit_pcm.wav" {
 
     const wavedata = @embedFile("./assets/8bit_pcm.wav");
     var reader = std.Io.Reader.fixed(wavedata);
-    const result: Wave = try read(allocator, &reader);
+    const result: Wave(f128) = try read(allocator, f128, &reader);
     defer result.deinit(allocator);
 
     try std.testing.expectEqual(.pcm, result.format_code);
@@ -209,7 +232,7 @@ test "read 16bit_pcm.wav" {
 
     const wavedata = @embedFile("./assets/16bit_pcm.wav");
     var reader = std.Io.Reader.fixed(wavedata);
-    const result: Wave = try read(allocator, &reader);
+    const result: Wave(f128) = try read(allocator, f128, &reader);
     defer result.deinit(allocator);
 
     try std.testing.expectEqual(.pcm, result.format_code);
@@ -237,7 +260,7 @@ test "read 24bit_pcm.wav" {
 
     const wavedata = @embedFile("./assets/24bit_pcm.wav");
     var reader = std.Io.Reader.fixed(wavedata);
-    const result: Wave = try read(allocator, &reader);
+    const result: Wave(f128) = try read(allocator, f128, &reader);
     defer result.deinit(allocator);
 
     try std.testing.expectEqual(.pcm, result.format_code);
@@ -265,7 +288,7 @@ test "read 32bit_pcm.wav" {
 
     const wavedata = @embedFile("./assets/32bit_pcm.wav");
     var reader = std.Io.Reader.fixed(wavedata);
-    const result: Wave = try read(allocator, &reader);
+    const result: Wave(f128) = try read(allocator, f128, &reader);
     defer result.deinit(allocator);
 
     try std.testing.expectEqual(.pcm, result.format_code);
@@ -293,7 +316,7 @@ test "read 32bit_ieee_float.wav" {
 
     const wavedata = @embedFile("./assets/32bit_ieee_float.wav");
     var reader = std.Io.Reader.fixed(wavedata);
-    const result = try read(allocator, &reader);
+    const result = try read(allocator, f128, &reader);
     defer result.deinit(allocator);
 
     try std.testing.expectEqual(.ieee_float, result.format_code);
@@ -321,7 +344,7 @@ test "read 64bit_ieee_float.wav" {
 
     const wavedata = @embedFile("./assets/64bit_ieee_float.wav");
     var reader = std.Io.Reader.fixed(wavedata);
-    const result = try read(allocator, &reader);
+    const result = try read(allocator, f128, &reader);
     defer result.deinit(allocator);
 
     try std.testing.expectEqual(.ieee_float, result.format_code);
@@ -358,20 +381,26 @@ pub const WriteOptions = struct {
 
 /// Writes a Wave structure to a WAV file format.
 ///
-/// This function converts the normalized f128 samples back to the format specified
+/// This function converts the normalized samples of type T back to the format specified
 /// by the Wave structure's fields (format_code, bits, channels, sample_rate) and
 /// writes a complete RIFF/WAVE file with appropriate chunks (fmt, data, and
 /// optionally fact and PEAK chunks).
 ///
 /// Parameters:
-///   - wave: Wave structure containing the audio data to write
+///   - T: Comptime type parameter specifying the sample data type (e.g., f32, f64, f128)
+///   - wave: Wave(T) structure containing the audio data to write
 ///   - writer: Writer interface where the WAV file will be written
 ///   - options: WriteOptions specifying allocator and optional chunks
 ///
 /// Errors:
 ///   - UnsupportedFormatCode: Audio format not supported for writing
 ///   - UnsupportedBits: Bit depth not supported for writing
-pub fn write(wave: Wave, writer: anytype, options: WriteOptions) anyerror!void {
+pub fn write(
+    comptime T: type,
+    wave: Wave(T),
+    writer: anytype,
+    options: WriteOptions,
+) anyerror!void {
     var chunk_list: std.array_list.Aligned(riff.Chunk, null) = .empty;
 
     const bits_per_sample: u16 = wave.bits;
@@ -511,17 +540,17 @@ test "write 8bit_pcm.wav" {
         0.6941176470588235294117647058823529,
         0.7137254901960784313725490196078431,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .pcm,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 8,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = false,
     });
@@ -545,17 +574,17 @@ test "write 16bit_pcm.wav" {
         0.3845942564165166173284096804712058,
         0.42780846583452864162114322336497085,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .pcm,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 16,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = false,
     });
@@ -579,17 +608,17 @@ test "write 24bit_pcm.wav" {
         0.38460354621452644044476037559036917,
         0.4277952227348354738754598945927494,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .pcm,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 24,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = false,
     });
@@ -613,17 +642,17 @@ test "write 32bit_pcm.wav" {
         0.38460361975459550495939119949908516,
         0.427794963320621737893960316616092,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .pcm,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 32,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = false,
     });
@@ -647,17 +676,17 @@ test "write 32bit_ieee_float.wav" {
         0.38460361957550048828125,
         0.4277949631214141845703125,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .ieee_float,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 32,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = true,
         .use_peak = true,
@@ -683,17 +712,17 @@ test "write 64bit_ieee_float.wav" {
         0.38460361957550048828125,
         0.4277949631214141845703125,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .ieee_float,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 64,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = true,
         .use_peak = true,
