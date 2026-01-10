@@ -35,6 +35,8 @@ pub const FormatCode = enum(u16) {
 /// WAV structure representing audio properties and normalized samples
 pub fn Wave(comptime T: type) type {
     return struct {
+        const Self = @This();
+
         format_code: FormatCode,
         sample_rate: u32,
         channels: u16,
@@ -42,29 +44,27 @@ pub fn Wave(comptime T: type) type {
         samples: []T,
 
         /// Deinitializes the Wave structure and frees the allocated samples memory
-        pub fn deinit(self: Wave(T), allocator: std.mem.Allocator) void {
+        pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
             allocator.free(self.samples);
         }
-    };
-}
 
-pub fn InitOptions(comptime T: type) type {
-    return struct {
-        format_code: FormatCode,
-        sample_rate: u32,
-        channels: u32,
-        bits: u16,
-        samples: []T,
-    };
-}
+        pub const InitOptions = struct {
+            format_code: FormatCode,
+            sample_rate: u32,
+            channels: u16,
+            bits: u16,
+            samples: []T,
+        };
 
-pub fn init(comptime T: type, options: InitOptions(T)) Wave(T) {
-    return Wave(T){
-        .format_code = options.format_code,
-        .sample_rate = options.sample_rate,
-        .channels = options.channels,
-        .bits = options.bits,
-        .samples = options.samples,
+        pub fn init(options: InitOptions) Self {
+            return .{
+                .format_code = options.format_code,
+                .sample_rate = options.sample_rate,
+                .channels = options.channels,
+                .bits = options.bits,
+                .samples = options.samples,
+            };
+        }
     };
 }
 
@@ -533,13 +533,13 @@ test "write 8bit_pcm.wav" {
         0.6941176470588235294117647058823529,
         0.7137254901960784313725490196078431,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .pcm,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 8,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
@@ -567,13 +567,13 @@ test "write 16bit_pcm.wav" {
         0.3845942564165166173284096804712058,
         0.42780846583452864162114322336497085,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .pcm,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 16,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
@@ -601,13 +601,13 @@ test "write 24bit_pcm.wav" {
         0.38460354621452644044476037559036917,
         0.4277952227348354738754598945927494,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .pcm,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 24,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
@@ -635,13 +635,13 @@ test "write 32bit_pcm.wav" {
         0.38460361975459550495939119949908516,
         0.427794963320621737893960316616092,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .pcm,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 32,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
@@ -669,13 +669,13 @@ test "write 32bit_ieee_float.wav" {
         0.38460361957550048828125,
         0.4277949631214141845703125,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .ieee_float,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 32,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
@@ -705,13 +705,13 @@ test "write 64bit_ieee_float.wav" {
         0.38460361957550048828125,
         0.4277949631214141845703125,
     };
-    const result: Wave = Wave{
+    const result: Wave(f128) = Wave(f128).init(.{
         .format_code = .ieee_float,
         .sample_rate = 44100,
         .channels = 1,
         .bits = 64,
         .samples = &samples,
-    };
+    });
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
