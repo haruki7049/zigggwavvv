@@ -32,7 +32,7 @@ pub const FormatCode = enum(u16) {
     _, // Unsupported
 };
 
-/// WAV structure representing audio properties and normalized samples
+/// WAV structure representing audio properties and samples of type T
 pub fn Wave(comptime T: type) type {
     return struct {
         const Self = @This();
