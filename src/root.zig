@@ -393,7 +393,12 @@ pub const WriteOptions = struct {
 /// Errors:
 ///   - UnsupportedFormatCode: Audio format not supported for writing
 ///   - UnsupportedBits: Bit depth not supported for writing
-pub fn write(wave: Wave, writer: anytype, options: WriteOptions) anyerror!void {
+pub fn write(
+    comptime T: type,
+    wave: Wave(T),
+    writer: anytype,
+    options: WriteOptions,
+) anyerror!void {
     var chunk_list: std.array_list.Aligned(riff.Chunk, null) = .empty;
 
     const bits_per_sample: u16 = wave.bits;
@@ -543,7 +548,7 @@ test "write 8bit_pcm.wav" {
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = false,
     });
@@ -577,7 +582,7 @@ test "write 16bit_pcm.wav" {
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = false,
     });
@@ -611,7 +616,7 @@ test "write 24bit_pcm.wav" {
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = false,
     });
@@ -645,7 +650,7 @@ test "write 32bit_pcm.wav" {
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = false,
     });
@@ -679,7 +684,7 @@ test "write 32bit_ieee_float.wav" {
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = true,
         .use_peak = true,
@@ -715,7 +720,7 @@ test "write 64bit_ieee_float.wav" {
 
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
-    try write(result, &w.writer, .{
+    try write(f128, result, &w.writer, .{
         .allocator = allocator,
         .use_fact = true,
         .use_peak = true,
