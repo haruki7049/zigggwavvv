@@ -8,7 +8,7 @@
 - **Wide Format Support**:
   - **PCM**: Support for 8, 16, 24, and 32-bit depths.
   - **IEEE Float**: Support for 32 and 64-bit depths.
-- **Normalized Processing**: Automatically normalizes all audio samples to `f128` for consistent internal processing.
+- **Flexible Type Support**: Supports processing audio samples as `f32`, `f64`, or `f128` types based on your precision needs.
 - **Extended Chunk Support**: Optional generation of `fact` and `PEAK` chunks when writing files.
 
 ## Installation
@@ -54,11 +54,11 @@ pub fn main() !void {
     const file = try std.fs.cwd().openFile("input.wav", .{});
     defer file.close();
 
-    // Parse the file into a Wave structure
-    const wave = try zigggwavvv.read(allocator, file.reader());
+    // Parse the file into a Wave structure with f128 precision
+    const wave = try zigggwavvv.read(allocator, f128, file.reader());
     defer wave.deinit(allocator);
 
-    // Access normalized samples (f128)
+    // Access samples (f128)
     for (wave.samples) |sample| {
         // Process audio data...
         _ = sample;
@@ -79,7 +79,7 @@ pub fn main() !void {
 
     // Define audio properties and samples
     var samples = [_]f128{ 0.0, 0.5, -0.5 };
-    const wave = zigggwavvv.Wave{
+    const wave = zigggwavvv.Wave(f128){
         .format_code = .pcm,
         .sample_rate = 44100,
         .channels = 1,
@@ -92,7 +92,7 @@ pub fn main() !void {
     defer file.close();
 
     // Write the WAV file with optional chunks
-    try zigggwavvv.write(wave, file.writer(), .{
+    try zigggwavvv.write(f128, wave, file.writer(), .{
         .allocator = allocator,
         .use_fact = false,
         .use_peak = true,
@@ -103,9 +103,9 @@ pub fn main() !void {
 
 ## API Overview
 
-- `zigggwavvv.read(allocator, reader)`: Parses a WAV file and returns a `Wave` struct.
-- `zigggwavvv.write(wave, writer, options)`: Serializes a `Wave` struct to a WAV file.
-- `Wave.deinit(allocator)`: Frees the memory allocated for samples.
+- `zigggwavvv.read(allocator, T, reader)`: Parses a WAV file and returns a `Wave(T)` struct with samples of type `T`.
+- `zigggwavvv.write(T, wave, writer, options)`: Serializes a `Wave(T)` struct to a WAV file.
+- `Wave(T).deinit(allocator)`: Frees the memory allocated for samples.
 
 ## Development
 

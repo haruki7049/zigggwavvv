@@ -4,20 +4,20 @@
 //! files using the RIFF container format. It supports both PCM and IEEE float audio formats
 //! with various bit depths (8, 16, 24, 32, and 64-bit).
 //!
-//! The library normalizes all audio samples to f128 for consistent processing, regardless
-//! of the original format and bit depth.
+//! The library provides flexible type support for audio sample processing, allowing you to
+//! choose the sample precision (f32, f64, or f128) based on your needs.
 //!
 //! ## Main Features
 //! - Read WAV files with `read()` function
 //! - Write WAV files with `write()` function
 //! - Support for PCM format (8, 16, 24, 32-bit)
 //! - Support for IEEE float format (32, 64-bit)
-//! - Normalized f128 sample representation
+//! - Flexible sample type support (f32, f64, f128)
 //! - Optional fact and PEAK chunk generation for writing
 //!
 //! ## Example Usage
 //! ```zig
-//! const wave = try read(allocator, reader);
+//! const wave = try read(allocator, f128, reader);
 //! defer wave.deinit(allocator);
 //! // Process wave.samples...
 //! ```
