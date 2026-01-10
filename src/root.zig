@@ -71,15 +71,16 @@ pub fn Wave(comptime T: type) type {
 /// Reads a WAV file from the provided reader and returns a Wave structure.
 ///
 /// This function parses the RIFF/WAVE file format and extracts audio data,
-/// converting samples to normalized f128 values. Supports PCM and IEEE float formats
-/// with 8, 16, 24, 32, and 64-bit sample depths.
+/// converting samples to normalized values of the specified type T. Supports PCM
+/// and IEEE float formats with 8, 16, 24, 32, and 64-bit sample depths.
 ///
 /// Parameters:
 ///   - allocator: Memory allocator for sample data
+///   - T: Comptime type parameter specifying the sample data type (e.g., f32, f64, f128)
 ///   - reader: Reader interface providing the WAV file data
 ///
 /// Returns:
-///   - Wave structure containing the parsed audio data
+///   - Wave(T) structure containing the parsed audio data with samples of type T
 ///
 /// Errors:
 ///   - InvalidFormat: Not a valid WAVE file
@@ -380,13 +381,14 @@ pub const WriteOptions = struct {
 
 /// Writes a Wave structure to a WAV file format.
 ///
-/// This function converts the normalized f128 samples back to the format specified
+/// This function converts the normalized samples of type T back to the format specified
 /// by the Wave structure's fields (format_code, bits, channels, sample_rate) and
 /// writes a complete RIFF/WAVE file with appropriate chunks (fmt, data, and
 /// optionally fact and PEAK chunks).
 ///
 /// Parameters:
-///   - wave: Wave structure containing the audio data to write
+///   - T: Comptime type parameter specifying the sample data type (e.g., f32, f64, f128)
+///   - wave: Wave(T) structure containing the audio data to write
 ///   - writer: Writer interface where the WAV file will be written
 ///   - options: WriteOptions specifying allocator and optional chunks
 ///
