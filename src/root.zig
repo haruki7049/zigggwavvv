@@ -33,18 +33,40 @@ pub const FormatCode = enum(u16) {
 };
 
 /// WAV structure representing audio properties and normalized samples
-pub const Wave = struct {
-    format_code: FormatCode,
-    sample_rate: u32,
-    channels: u16,
-    bits: u16,
-    samples: []f128,
+pub fn Wave(comptime T: type) type {
+    return struct {
+        format_code: FormatCode,
+        sample_rate: u32,
+        channels: u16,
+        bits: u16,
+        samples: []T,
 
-    /// Deinitializes the Wave structure and frees the allocated samples memory
-    pub fn deinit(self: Wave, allocator: std.mem.Allocator) void {
-        allocator.free(self.samples);
-    }
-};
+        /// Deinitializes the Wave structure and frees the allocated samples memory
+        pub fn deinit(self: Wave(T), allocator: std.mem.Allocator) void {
+            allocator.free(self.samples);
+        }
+    };
+}
+
+pub fn InitOptions(comptime T: type) type {
+    return struct {
+        format_code: FormatCode,
+        sample_rate: u32,
+        channels: u32,
+        bits: u16,
+        samples: []T,
+    };
+}
+
+pub fn init(comptime T: type, options: InitOptions(T)) Wave(T) {
+    return Wave(T){
+        .format_code = options.format_code,
+        .sample_rate = options.sample_rate,
+        .channels = options.channels,
+        .bits = options.bits,
+        .samples = options.samples,
+    };
+}
 
 /// Reads a WAV file from the provided reader and returns a Wave structure.
 ///
@@ -167,13 +189,13 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Wave {
         }
     }
 
-    return Wave{
+    return Wave.init(.{
         .format_code = format_code,
         .sample_rate = sample_rate,
         .channels = channels,
         .bits = bits,
         .samples = samples,
-    };
+    });
 }
 
 test "read 8bit_pcm.wav" {
