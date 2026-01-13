@@ -104,7 +104,7 @@ pub fn main() !void {
 ## API Overview
 
 - `zigggwavvv.Wave(T).read(allocator, reader)`: Parses a WAV file and returns a `Wave(T)` struct with samples of type `T`.
-- `Wave(T).write(writer, options)`: Serializes a `Wave(T)` struct to a WAV file.
+- `wave.write(writer, options)`: Serializes a `Wave(T)` struct to a WAV file.
 - `Wave(T).deinit(allocator)`: Frees the memory allocated for samples.
 
 ## Development
