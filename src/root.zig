@@ -65,6 +65,382 @@ pub fn Wave(comptime T: type) type {
                 .samples = options.samples,
             };
         }
+
+        test "read 8bit_pcm.wav" {
+            const allocator = std.testing.allocator;
+
+            const wavedata = @embedFile("./assets/8bit_pcm.wav");
+            var reader = std.Io.Reader.fixed(wavedata);
+            const result: Wave(T) = try read(allocator, T, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(.pcm, result.format_code);
+            try std.testing.expectEqual(44100, result.sample_rate);
+            try std.testing.expectEqual(1, result.channels);
+            try std.testing.expectEqual(8, result.bits);
+
+            const expected_samples = &[_]T{
+                0.498039215686274509803921568627451,
+                0.52549019607843137254901960784313725,
+                0.5490196078431372549019607843137255,
+                0.57647058823529411764705882352941175,
+                0.6,
+                0.6235294117647058823529411764705882,
+                0.6470588235294117647058823529411764,
+                0.6705882352941176470588235294117647,
+                0.6941176470588235294117647058823529,
+                0.7137254901960784313725490196078431,
+            };
+            try std.testing.expectEqualSlices(T, expected_samples, result.samples);
+        }
+
+        test "read 16bit_pcm.wav" {
+            const allocator = std.testing.allocator;
+
+            const wavedata = @embedFile("./assets/16bit_pcm.wav");
+            var reader = std.Io.Reader.fixed(wavedata);
+            const result: Wave(T) = try read(allocator, T, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(.pcm, result.format_code);
+            try std.testing.expectEqual(44100, result.sample_rate);
+            try std.testing.expectEqual(1, result.channels);
+            try std.testing.expectEqual(16, result.bits);
+
+            const expected_samples = &[_]T{
+                0.000030518509475997192297128208258308664,
+                0.05005035554063539536729026154362621,
+                0.10010071108127079073458052308725242,
+                0.14954069643238624225592822046571245,
+                0.19855342265083773308511612292855616,
+                0.24668111209448530533768730735190894,
+                0.2938322092349009674367503891109958,
+                0.3399456770531327249977111117893002,
+                0.3845942564165166173284096804712058,
+                0.42780846583452864162114322336497085,
+            };
+            try std.testing.expectEqualSlices(T, expected_samples, result.samples);
+        }
+
+        test "read 24bit_pcm.wav" {
+            const allocator = std.testing.allocator;
+
+            const wavedata = @embedFile("./assets/24bit_pcm.wav");
+            var reader = std.Io.Reader.fixed(wavedata);
+            const result: Wave(T) = try read(allocator, T, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(.pcm, result.format_code);
+            try std.testing.expectEqual(44100, result.sample_rate);
+            try std.testing.expectEqual(1, result.channels);
+            try std.testing.expectEqual(24, result.bits);
+
+            const expected_samples = &[_]T{
+                0,
+                0.050118690743290274535450283938680163,
+                0.1000403285074625620201303982890127,
+                0.1495694100343477766928406587649177,
+                0.19851007443786554787940357677979192,
+                0.24667170604130101696264946015470744,
+                0.2938635699586355636877493486105619,
+                0.3399014878155574578711340273778471,
+                0.38460354621452644044476037559036917,
+                0.4277952227348354738754598945927494,
+            };
+            try std.testing.expectEqualSlices(T, expected_samples, result.samples);
+        }
+
+        test "read 32bit_pcm.wav" {
+            const allocator = std.testing.allocator;
+
+            const wavedata = @embedFile("./assets/32bit_pcm.wav");
+            var reader = std.Io.Reader.fixed(wavedata);
+            const result: Wave(T) = try read(allocator, T, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(.pcm, result.format_code);
+            try std.testing.expectEqual(44100, result.sample_rate);
+            try std.testing.expectEqual(1, result.channels);
+            try std.testing.expectEqual(32, result.bits);
+
+            const expected_samples = &[_]T{
+                0,
+                0.050118658714982987714457785577726453,
+                0.10004042093643938234841422287207759,
+                0.14956915385535413113206351694281378,
+                0.1985102743834770630968162152435706,
+                0.2466715277389956301725449181033973,
+                0.29386368407582104395880412494708046,
+                0.33990132824513191741198856263048415,
+                0.38460361975459550495939119949908516,
+                0.427794963320621737893960316616092,
+            };
+            try std.testing.expectEqualSlices(T, expected_samples, result.samples);
+        }
+
+        test "read 32bit_ieee_float.wav" {
+            const allocator = std.testing.allocator;
+
+            const wavedata = @embedFile("./assets/32bit_ieee_float.wav");
+            var reader = std.Io.Reader.fixed(wavedata);
+            const result = try read(allocator, T, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(.ieee_float, result.format_code);
+            try std.testing.expectEqual(44100, result.sample_rate);
+            try std.testing.expectEqual(1, result.channels);
+            try std.testing.expectEqual(32, result.bits);
+
+            const expected_samples = &[_]T{
+                0,
+                0.0501186586916446685791015625,
+                0.10004042088985443115234375,
+                0.14956915378570556640625,
+                0.19851027429103851318359375,
+                0.2466715276241302490234375,
+                0.2938636839389801025390625,
+                0.33990132808685302734375,
+                0.38460361957550048828125,
+                0.4277949631214141845703125,
+            };
+            try std.testing.expectEqualSlices(T, expected_samples, result.samples);
+        }
+
+        test "read 64bit_ieee_float.wav" {
+            const allocator = std.testing.allocator;
+
+            const wavedata = @embedFile("./assets/64bit_ieee_float.wav");
+            var reader = std.Io.Reader.fixed(wavedata);
+            const result = try read(allocator, T, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(.ieee_float, result.format_code);
+            try std.testing.expectEqual(44100, result.sample_rate);
+            try std.testing.expectEqual(1, result.channels);
+            try std.testing.expectEqual(64, result.bits);
+
+            const expected_samples = &[_]T{
+                0,
+                0.0501186586916446685791015625,
+                0.10004042088985443115234375,
+                0.14956915378570556640625,
+                0.19851027429103851318359375,
+                0.2466715276241302490234375,
+                0.2938636839389801025390625,
+                0.33990132808685302734375,
+                0.38460361957550048828125,
+                0.4277949631214141845703125,
+            };
+            try std.testing.expectEqualSlices(T, expected_samples, result.samples);
+        }
+
+        test "write 8bit_pcm.wav" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{
+                0.498039215686274509803921568627451,
+                0.52549019607843137254901960784313725,
+                0.5490196078431372549019607843137255,
+                0.57647058823529411764705882352941175,
+                0.6,
+                0.6235294117647058823529411764705882,
+                0.6470588235294117647058823529411764,
+                0.6705882352941176470588235294117647,
+                0.6941176470588235294117647058823529,
+                0.7137254901960784313725490196078431,
+            };
+            const result: Wave(T) = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 8,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try write(T, result, &w.writer, .{
+                .allocator = allocator,
+                .use_fact = false,
+            });
+
+            const expected = @embedFile("./assets/8bit_pcm.wav");
+            try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+        }
+
+        test "write 16bit_pcm.wav" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{
+                0.000030518509475997192297128208258308664,
+                0.05005035554063539536729026154362621,
+                0.10010071108127079073458052308725242,
+                0.14954069643238624225592822046571245,
+                0.19855342265083773308511612292855616,
+                0.24668111209448530533768730735190894,
+                0.2938322092349009674367503891109958,
+                0.3399456770531327249977111117893002,
+                0.3845942564165166173284096804712058,
+                0.42780846583452864162114322336497085,
+            };
+            const result: Wave(T) = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 16,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try write(T, result, &w.writer, .{
+                .allocator = allocator,
+                .use_fact = false,
+            });
+
+            const expected = @embedFile("./assets/16bit_pcm.wav");
+            try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+        }
+
+        test "write 24bit_pcm.wav" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{
+                0,
+                0.050118690743290274535450283938680163,
+                0.1000403285074625620201303982890127,
+                0.1495694100343477766928406587649177,
+                0.19851007443786554787940357677979192,
+                0.24667170604130101696264946015470744,
+                0.2938635699586355636877493486105619,
+                0.3399014878155574578711340273778471,
+                0.38460354621452644044476037559036917,
+                0.4277952227348354738754598945927494,
+            };
+            const result: Wave(T) = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 24,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try write(T, result, &w.writer, .{
+                .allocator = allocator,
+                .use_fact = false,
+            });
+
+            const expected = @embedFile("./assets/24bit_pcm.wav");
+            try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+        }
+
+        test "write 32bit_pcm.wav" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{
+                0,
+                0.050118658714982987714457785577726453,
+                0.10004042093643938234841422287207759,
+                0.14956915385535413113206351694281378,
+                0.1985102743834770630968162152435706,
+                0.2466715277389956301725449181033973,
+                0.29386368407582104395880412494708046,
+                0.33990132824513191741198856263048415,
+                0.38460361975459550495939119949908516,
+                0.427794963320621737893960316616092,
+            };
+            const result: Wave(T) = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 32,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try write(T, result, &w.writer, .{
+                .allocator = allocator,
+                .use_fact = false,
+            });
+
+            const expected = @embedFile("./assets/32bit_pcm.wav");
+            try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+        }
+
+        test "write 32bit_ieee_float.wav" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{
+                0,
+                0.0501186586916446685791015625,
+                0.10004042088985443115234375,
+                0.14956915378570556640625,
+                0.19851027429103851318359375,
+                0.2466715276241302490234375,
+                0.2938636839389801025390625,
+                0.33990132808685302734375,
+                0.38460361957550048828125,
+                0.4277949631214141845703125,
+            };
+            const result: Wave(T) = Wave(T).init(.{
+                .format_code = .ieee_float,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 32,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try write(T, result, &w.writer, .{
+                .allocator = allocator,
+                .use_fact = true,
+                .use_peak = true,
+                .peak_timestamp = 0x695DE0F8,
+            });
+
+            const expected = @embedFile("./assets/32bit_ieee_float.wav");
+            try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+        }
+
+        test "write 64bit_ieee_float.wav" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{
+                0,
+                0.0501186586916446685791015625,
+                0.10004042088985443115234375,
+                0.14956915378570556640625,
+                0.19851027429103851318359375,
+                0.2466715276241302490234375,
+                0.2938636839389801025390625,
+                0.33990132808685302734375,
+                0.38460361957550048828125,
+                0.4277949631214141845703125,
+            };
+            const result: Wave(T) = Wave(T).init(.{
+                .format_code = .ieee_float,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 64,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try write(T, result, &w.writer, .{
+                .allocator = allocator,
+                .use_fact = true,
+                .use_peak = true,
+                .peak_timestamp = 0x695DE11A,
+            });
+
+            const expected = @embedFile("./assets/64bit_ieee_float.wav");
+            try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+        }
     };
 }
 
@@ -133,7 +509,7 @@ pub fn read(allocator: std.mem.Allocator, comptime T: type, reader: anytype) any
                 64 => data.len / 8, // 64bit
                 else => unreachable,
             };
-            var samples_list: []f128 = try allocator.alloc(f128, samples_count);
+            var samples_list: []T = try allocator.alloc(T, samples_count);
             errdefer allocator.free(samples_list);
 
             for (0..samples_count) |i| {
@@ -197,174 +573,6 @@ pub fn read(allocator: std.mem.Allocator, comptime T: type, reader: anytype) any
         .bits = bits,
         .samples = samples,
     });
-}
-
-test "read 8bit_pcm.wav" {
-    const allocator = std.testing.allocator;
-
-    const wavedata = @embedFile("./assets/8bit_pcm.wav");
-    var reader = std.Io.Reader.fixed(wavedata);
-    const result: Wave(f128) = try read(allocator, f128, &reader);
-    defer result.deinit(allocator);
-
-    try std.testing.expectEqual(.pcm, result.format_code);
-    try std.testing.expectEqual(44100, result.sample_rate);
-    try std.testing.expectEqual(1, result.channels);
-    try std.testing.expectEqual(8, result.bits);
-
-    const expected_samples = &[_]f128{
-        0.498039215686274509803921568627451,
-        0.52549019607843137254901960784313725,
-        0.5490196078431372549019607843137255,
-        0.57647058823529411764705882352941175,
-        0.6,
-        0.6235294117647058823529411764705882,
-        0.6470588235294117647058823529411764,
-        0.6705882352941176470588235294117647,
-        0.6941176470588235294117647058823529,
-        0.7137254901960784313725490196078431,
-    };
-    try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
-}
-
-test "read 16bit_pcm.wav" {
-    const allocator = std.testing.allocator;
-
-    const wavedata = @embedFile("./assets/16bit_pcm.wav");
-    var reader = std.Io.Reader.fixed(wavedata);
-    const result: Wave(f128) = try read(allocator, f128, &reader);
-    defer result.deinit(allocator);
-
-    try std.testing.expectEqual(.pcm, result.format_code);
-    try std.testing.expectEqual(44100, result.sample_rate);
-    try std.testing.expectEqual(1, result.channels);
-    try std.testing.expectEqual(16, result.bits);
-
-    const expected_samples = &[_]f128{
-        0.000030518509475997192297128208258308664,
-        0.05005035554063539536729026154362621,
-        0.10010071108127079073458052308725242,
-        0.14954069643238624225592822046571245,
-        0.19855342265083773308511612292855616,
-        0.24668111209448530533768730735190894,
-        0.2938322092349009674367503891109958,
-        0.3399456770531327249977111117893002,
-        0.3845942564165166173284096804712058,
-        0.42780846583452864162114322336497085,
-    };
-    try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
-}
-
-test "read 24bit_pcm.wav" {
-    const allocator = std.testing.allocator;
-
-    const wavedata = @embedFile("./assets/24bit_pcm.wav");
-    var reader = std.Io.Reader.fixed(wavedata);
-    const result: Wave(f128) = try read(allocator, f128, &reader);
-    defer result.deinit(allocator);
-
-    try std.testing.expectEqual(.pcm, result.format_code);
-    try std.testing.expectEqual(44100, result.sample_rate);
-    try std.testing.expectEqual(1, result.channels);
-    try std.testing.expectEqual(24, result.bits);
-
-    const expected_samples = &[_]f128{
-        0,
-        0.050118690743290274535450283938680163,
-        0.1000403285074625620201303982890127,
-        0.1495694100343477766928406587649177,
-        0.19851007443786554787940357677979192,
-        0.24667170604130101696264946015470744,
-        0.2938635699586355636877493486105619,
-        0.3399014878155574578711340273778471,
-        0.38460354621452644044476037559036917,
-        0.4277952227348354738754598945927494,
-    };
-    try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
-}
-
-test "read 32bit_pcm.wav" {
-    const allocator = std.testing.allocator;
-
-    const wavedata = @embedFile("./assets/32bit_pcm.wav");
-    var reader = std.Io.Reader.fixed(wavedata);
-    const result: Wave(f128) = try read(allocator, f128, &reader);
-    defer result.deinit(allocator);
-
-    try std.testing.expectEqual(.pcm, result.format_code);
-    try std.testing.expectEqual(44100, result.sample_rate);
-    try std.testing.expectEqual(1, result.channels);
-    try std.testing.expectEqual(32, result.bits);
-
-    const expected_samples = &[_]f128{
-        0,
-        0.050118658714982987714457785577726453,
-        0.10004042093643938234841422287207759,
-        0.14956915385535413113206351694281378,
-        0.1985102743834770630968162152435706,
-        0.2466715277389956301725449181033973,
-        0.29386368407582104395880412494708046,
-        0.33990132824513191741198856263048415,
-        0.38460361975459550495939119949908516,
-        0.427794963320621737893960316616092,
-    };
-    try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
-}
-
-test "read 32bit_ieee_float.wav" {
-    const allocator = std.testing.allocator;
-
-    const wavedata = @embedFile("./assets/32bit_ieee_float.wav");
-    var reader = std.Io.Reader.fixed(wavedata);
-    const result = try read(allocator, f128, &reader);
-    defer result.deinit(allocator);
-
-    try std.testing.expectEqual(.ieee_float, result.format_code);
-    try std.testing.expectEqual(44100, result.sample_rate);
-    try std.testing.expectEqual(1, result.channels);
-    try std.testing.expectEqual(32, result.bits);
-
-    const expected_samples = &[_]f128{
-        0,
-        0.0501186586916446685791015625,
-        0.10004042088985443115234375,
-        0.14956915378570556640625,
-        0.19851027429103851318359375,
-        0.2466715276241302490234375,
-        0.2938636839389801025390625,
-        0.33990132808685302734375,
-        0.38460361957550048828125,
-        0.4277949631214141845703125,
-    };
-    try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
-}
-
-test "read 64bit_ieee_float.wav" {
-    const allocator = std.testing.allocator;
-
-    const wavedata = @embedFile("./assets/64bit_ieee_float.wav");
-    var reader = std.Io.Reader.fixed(wavedata);
-    const result = try read(allocator, f128, &reader);
-    defer result.deinit(allocator);
-
-    try std.testing.expectEqual(.ieee_float, result.format_code);
-    try std.testing.expectEqual(44100, result.sample_rate);
-    try std.testing.expectEqual(1, result.channels);
-    try std.testing.expectEqual(64, result.bits);
-
-    const expected_samples = &[_]f128{
-        0,
-        0.0501186586916446685791015625,
-        0.10004042088985443115234375,
-        0.14956915378570556640625,
-        0.19851027429103851318359375,
-        0.2466715276241302490234375,
-        0.2938636839389801025390625,
-        0.33990132808685302734375,
-        0.38460361957550048828125,
-        0.4277949631214141845703125,
-    };
-    try std.testing.expectEqualSlices(f128, expected_samples, result.samples);
 }
 
 /// Options for writing WAV files
@@ -525,210 +733,9 @@ pub fn write(
     try riff.write(wave_riff, options.allocator, writer);
 }
 
-test "write 8bit_pcm.wav" {
-    const allocator = std.testing.allocator;
-
-    var samples = [_]f128{
-        0.498039215686274509803921568627451,
-        0.52549019607843137254901960784313725,
-        0.5490196078431372549019607843137255,
-        0.57647058823529411764705882352941175,
-        0.6,
-        0.6235294117647058823529411764705882,
-        0.6470588235294117647058823529411764,
-        0.6705882352941176470588235294117647,
-        0.6941176470588235294117647058823529,
-        0.7137254901960784313725490196078431,
-    };
-    const result: Wave(f128) = Wave(f128).init(.{
-        .format_code = .pcm,
-        .sample_rate = 44100,
-        .channels = 1,
-        .bits = 8,
-        .samples = &samples,
-    });
-
-    var w = std.Io.Writer.Allocating.init(allocator);
-    defer w.deinit();
-    try write(f128, result, &w.writer, .{
-        .allocator = allocator,
-        .use_fact = false,
-    });
-
-    const expected = @embedFile("./assets/8bit_pcm.wav");
-    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
-}
-
-test "write 16bit_pcm.wav" {
-    const allocator = std.testing.allocator;
-
-    var samples = [_]f128{
-        0.000030518509475997192297128208258308664,
-        0.05005035554063539536729026154362621,
-        0.10010071108127079073458052308725242,
-        0.14954069643238624225592822046571245,
-        0.19855342265083773308511612292855616,
-        0.24668111209448530533768730735190894,
-        0.2938322092349009674367503891109958,
-        0.3399456770531327249977111117893002,
-        0.3845942564165166173284096804712058,
-        0.42780846583452864162114322336497085,
-    };
-    const result: Wave(f128) = Wave(f128).init(.{
-        .format_code = .pcm,
-        .sample_rate = 44100,
-        .channels = 1,
-        .bits = 16,
-        .samples = &samples,
-    });
-
-    var w = std.Io.Writer.Allocating.init(allocator);
-    defer w.deinit();
-    try write(f128, result, &w.writer, .{
-        .allocator = allocator,
-        .use_fact = false,
-    });
-
-    const expected = @embedFile("./assets/16bit_pcm.wav");
-    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
-}
-
-test "write 24bit_pcm.wav" {
-    const allocator = std.testing.allocator;
-
-    var samples = [_]f128{
-        0,
-        0.050118690743290274535450283938680163,
-        0.1000403285074625620201303982890127,
-        0.1495694100343477766928406587649177,
-        0.19851007443786554787940357677979192,
-        0.24667170604130101696264946015470744,
-        0.2938635699586355636877493486105619,
-        0.3399014878155574578711340273778471,
-        0.38460354621452644044476037559036917,
-        0.4277952227348354738754598945927494,
-    };
-    const result: Wave(f128) = Wave(f128).init(.{
-        .format_code = .pcm,
-        .sample_rate = 44100,
-        .channels = 1,
-        .bits = 24,
-        .samples = &samples,
-    });
-
-    var w = std.Io.Writer.Allocating.init(allocator);
-    defer w.deinit();
-    try write(f128, result, &w.writer, .{
-        .allocator = allocator,
-        .use_fact = false,
-    });
-
-    const expected = @embedFile("./assets/24bit_pcm.wav");
-    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
-}
-
-test "write 32bit_pcm.wav" {
-    const allocator = std.testing.allocator;
-
-    var samples = [_]f128{
-        0,
-        0.050118658714982987714457785577726453,
-        0.10004042093643938234841422287207759,
-        0.14956915385535413113206351694281378,
-        0.1985102743834770630968162152435706,
-        0.2466715277389956301725449181033973,
-        0.29386368407582104395880412494708046,
-        0.33990132824513191741198856263048415,
-        0.38460361975459550495939119949908516,
-        0.427794963320621737893960316616092,
-    };
-    const result: Wave(f128) = Wave(f128).init(.{
-        .format_code = .pcm,
-        .sample_rate = 44100,
-        .channels = 1,
-        .bits = 32,
-        .samples = &samples,
-    });
-
-    var w = std.Io.Writer.Allocating.init(allocator);
-    defer w.deinit();
-    try write(f128, result, &w.writer, .{
-        .allocator = allocator,
-        .use_fact = false,
-    });
-
-    const expected = @embedFile("./assets/32bit_pcm.wav");
-    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
-}
-
-test "write 32bit_ieee_float.wav" {
-    const allocator = std.testing.allocator;
-
-    var samples = [_]f128{
-        0,
-        0.0501186586916446685791015625,
-        0.10004042088985443115234375,
-        0.14956915378570556640625,
-        0.19851027429103851318359375,
-        0.2466715276241302490234375,
-        0.2938636839389801025390625,
-        0.33990132808685302734375,
-        0.38460361957550048828125,
-        0.4277949631214141845703125,
-    };
-    const result: Wave(f128) = Wave(f128).init(.{
-        .format_code = .ieee_float,
-        .sample_rate = 44100,
-        .channels = 1,
-        .bits = 32,
-        .samples = &samples,
-    });
-
-    var w = std.Io.Writer.Allocating.init(allocator);
-    defer w.deinit();
-    try write(f128, result, &w.writer, .{
-        .allocator = allocator,
-        .use_fact = true,
-        .use_peak = true,
-        .peak_timestamp = 0x695DE0F8,
-    });
-
-    const expected = @embedFile("./assets/32bit_ieee_float.wav");
-    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
-}
-
-test "write 64bit_ieee_float.wav" {
-    const allocator = std.testing.allocator;
-
-    var samples = [_]f128{
-        0,
-        0.0501186586916446685791015625,
-        0.10004042088985443115234375,
-        0.14956915378570556640625,
-        0.19851027429103851318359375,
-        0.2466715276241302490234375,
-        0.2938636839389801025390625,
-        0.33990132808685302734375,
-        0.38460361957550048828125,
-        0.4277949631214141845703125,
-    };
-    const result: Wave(f128) = Wave(f128).init(.{
-        .format_code = .ieee_float,
-        .sample_rate = 44100,
-        .channels = 1,
-        .bits = 64,
-        .samples = &samples,
-    });
-
-    var w = std.Io.Writer.Allocating.init(allocator);
-    defer w.deinit();
-    try write(f128, result, &w.writer, .{
-        .allocator = allocator,
-        .use_fact = true,
-        .use_peak = true,
-        .peak_timestamp = 0x695DE11A,
-    });
-
-    const expected = @embedFile("./assets/64bit_ieee_float.wav");
-    try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+test "Each Wave's child type of samples' array" {
+    _ = Wave(f128);
+    _ = Wave(f80);
+    _ = Wave(f64);
+    //_ = Wave(f32); // f32 cannot cover i32's max value, 2147483647
 }
