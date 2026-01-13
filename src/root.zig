@@ -27,9 +27,12 @@ const riff = @import("riff");
 
 /// Audio encoding format
 pub const FormatCode = enum(u16) {
+    /// PCM (Pulse Code Modulation) format - uncompressed audio data
     pcm = 1,
+    /// IEEE floating point format - audio data stored as floating point values
     ieee_float = 3,
-    _, // Unsupported
+    /// Unsupported format codes
+    _,
 };
 
 /// WAV structure representing audio properties and samples of type T
@@ -37,10 +40,15 @@ pub fn Wave(comptime T: type) type {
     return struct {
         const Self = @This();
 
+        /// Audio encoding format (PCM or IEEE float)
         format_code: FormatCode,
+        /// Sample rate in Hz (e.g., 44100, 48000)
         sample_rate: u32,
+        /// Number of audio channels (1 for mono, 2 for stereo, etc.)
         channels: u16,
+        /// Bit depth per sample (8, 16, 24, 32, or 64)
         bits: u16,
+        /// Array of normalized audio samples of type T
         samples: []T,
 
         /// Deinitializes the Wave structure and frees the allocated samples memory
@@ -48,14 +56,21 @@ pub fn Wave(comptime T: type) type {
             allocator.free(self.samples);
         }
 
+        /// Initialization options for creating a Wave structure
         pub const InitOptions = struct {
+            /// Audio encoding format (PCM or IEEE float)
             format_code: FormatCode,
+            /// Sample rate in Hz (e.g., 44100, 48000)
             sample_rate: u32,
+            /// Number of audio channels (1 for mono, 2 for stereo, etc.)
             channels: u16,
+            /// Bit depth per sample (8, 16, 24, 32, or 64)
             bits: u16,
+            /// Array of normalized audio samples of type T
             samples: []T,
         };
 
+        /// Initializes a new Wave structure with the given options
         pub fn init(options: InitOptions) Self {
             return .{
                 .format_code = options.format_code,
