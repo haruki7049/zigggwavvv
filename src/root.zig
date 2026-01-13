@@ -8,8 +8,8 @@
 //! choose the sample precision (f32, f64, or f128) based on your needs.
 //!
 //! ## Main Features
-//! - Read WAV files with `read()` function
-//! - Write WAV files with `write()` function
+//! - Read WAV files with `Wave(T).read()` method
+//! - Write WAV files with `wave.write()` method
 //! - Support for PCM format (8, 16, 24, 32-bit)
 //! - Support for IEEE float format (32, 64-bit)
 //! - Flexible sample type support (f32, f64, f128)
@@ -17,7 +17,7 @@
 //!
 //! ## Example Usage
 //! ```zig
-//! const wave = try read(allocator, f128, reader);
+//! const wave = try Wave(f128).read(allocator, reader);
 //! defer wave.deinit(allocator);
 //! // Process wave.samples...
 //! ```

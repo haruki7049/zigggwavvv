@@ -55,7 +55,7 @@ pub fn main() !void {
     defer file.close();
 
     // Parse the file into a Wave structure with f128 precision
-    const wave = try zigggwavvv.read(allocator, f128, file.reader());
+    const wave = try zigggwavvv.Wave(f128).read(allocator, file.reader());
     defer wave.deinit(allocator);
 
     // Access samples (f128)
@@ -92,7 +92,7 @@ pub fn main() !void {
     defer file.close();
 
     // Write the WAV file with optional chunks
-    try zigggwavvv.write(f128, wave, file.writer(), .{
+    try wave.write(file.writer(), .{
         .allocator = allocator,
         .use_fact = false,
         .use_peak = true,
@@ -103,8 +103,8 @@ pub fn main() !void {
 
 ## API Overview
 
-- `zigggwavvv.read(allocator, T, reader)`: Parses a WAV file and returns a `Wave(T)` struct with samples of type `T`.
-- `zigggwavvv.write(T, wave, writer, options)`: Serializes a `Wave(T)` struct to a WAV file.
+- `zigggwavvv.Wave(T).read(allocator, reader)`: Parses a WAV file and returns a `Wave(T)` struct with samples of type `T`.
+- `Wave(T).write(writer, options)`: Serializes a `Wave(T)` struct to a WAV file.
 - `Wave(T).deinit(allocator)`: Frees the memory allocated for samples.
 
 ## Development
