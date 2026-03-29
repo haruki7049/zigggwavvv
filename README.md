@@ -107,17 +107,6 @@ pub fn main() !void {
 - `wave.write(writer, options)`: Serializes a `Wave(T)` struct to a WAV file.
 - `Wave(T).deinit(allocator)`: Frees the memory allocated for samples.
 
-## Development
-
-This project uses [Nix](https://nixos.org/) for the development environment.
-
-```sh
-# Enter the Nix development shell
-nix develop
-# Run unit tests
-zig build test
-```
-
 ## License
 
 This project is dual-licensed under the **MIT License** and **Apache License 2.0**.
