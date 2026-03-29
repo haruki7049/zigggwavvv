@@ -5,14 +5,14 @@
 //! with various bit depths (8, 16, 24, 32, and 64-bit).
 //!
 //! The library provides flexible type support for audio sample processing, allowing you to
-//! choose the sample precision (f32, f64, or f128) based on your needs.
+//! choose the sample precision (f64, f80, or f128) based on your needs.
 //!
 //! ## Main Features
 //! - Read WAV files with `Wave(T).read()` method
 //! - Write WAV files with `wave.write()` method
 //! - Support for PCM format (8, 16, 24, 32-bit)
 //! - Support for IEEE float format (32, 64-bit)
-//! - Flexible sample type support (f32, f64, f128)
+//! - Flexible sample type support (f64, f80, f128)
 //! - Optional fact and PEAK chunk generation for writing
 //!
 //! ## Example Usage
@@ -74,7 +74,7 @@ pub fn Wave(comptime T: type) type {
         ///
         /// Parameters:
         ///   - allocator: Memory allocator for sample data
-        ///   - T: Comptime type parameter specifying the sample data type (e.g., f32, f64, f128)
+        ///   - T: Comptime type parameter specifying the sample data type (e.g., f64, f80, f128)
         ///   - reader: Reader interface providing the WAV file data
         ///
         /// Returns:
@@ -217,7 +217,7 @@ pub fn Wave(comptime T: type) type {
         /// optionally fact and PEAK chunks).
         ///
         /// Parameters:
-        ///   - T: Comptime type parameter specifying the sample data type (e.g., f32, f64, f128)
+        ///   - T: Comptime type parameter specifying the sample data type (e.g., f64, f80, f128)
         ///   - wave: Wave(T) structure containing the audio data to write
         ///   - writer: Writer interface where the WAV file will be written
         ///   - options: WriteOptions specifying allocator and optional chunks
