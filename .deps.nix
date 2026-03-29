@@ -8,10 +8,10 @@
 
 linkFarm "zig-packages" [
   {
-    name = "riff_zig-0.2.2-J7H0A7E6TACguwXvmw4K6xMxRjFwkYP7L8_KMXRTWzzb";
+    name = "riff_zig-1.0.0-J7H0A7E6TAAFStkejtsMRsIhfgLMLzf5iYxWgeSFBLJu";
     path = fetchzip {
-      url = "https://github.com/haruki7049/RIFF.zig/archive/refs/tags/0.2.2.tar.gz";
-      hash = "sha256-wrWM/Q1mCxADCGk/vJJNTw7G8QRzn7tyQaf51LfSI+U=";
+      url = "https://github.com/haruki7049/RIFF.zig/archive/refs/tags/1.0.0.tar.gz";
+      hash = "sha256-ELlLnVXNOfI44m9EbnKAsaWMjDKEAP1i0VnIdv1Tq14=";
     };
   }
 ]
