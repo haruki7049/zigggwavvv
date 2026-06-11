@@ -13,4 +13,4 @@ Also, you can use any package manager to installing Ziglang.
 
 ### Zig version
 
-I use `Zig 0.15.2` for this project.
+I use `Zig 0.16.0` for this project.

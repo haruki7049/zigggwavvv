@@ -113,4 +113,4 @@ This project is dual-licensed under the **MIT License** and **Apache License 2.0
 
 ## Zig version
 
-0.15.2
+0.16.0
