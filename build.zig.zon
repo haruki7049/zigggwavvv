@@ -6,8 +6,8 @@
 
     .dependencies = .{
         .riff_zig = .{
-            .url = "https://github.com/haruki7049/RIFF.zig/archive/refs/tags/1.0.0.tar.gz",
-            .hash = "riff_zig-1.0.0-J7H0A7E6TAAFStkejtsMRsIhfgLMLzf5iYxWgeSFBLJu",
+            .url = "https://github.com/haruki7049/RIFF.zig/archive/refs/tags/1.1.2.tar.gz",
+            .hash = "riff_zig-1.1.2-J7H0A0lxTADPiTM0n8qFOJER78SXIXJTG63AjeC768FG",
         },
     },
 
