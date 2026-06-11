@@ -34,7 +34,7 @@
             doCheck = true;
 
             nativeBuildInputs = [
-              pkgs.zig_0_15.hook
+              pkgs.zig_0_16.hook
             ];
 
             postConfigure = ''
@@ -51,7 +51,7 @@
 
             # Zig
             programs.zig.enable = true;
-            settings.formatter.zig.command = lib.getExe pkgs.zig_0_15;
+            settings.formatter.zig.command = lib.getExe pkgs.zig_0_16;
 
             # GitHub Actions
             programs.actionlint.enable = true;
@@ -72,11 +72,11 @@
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = [
               # Compiler
-              pkgs.zig_0_15
+              pkgs.zig_0_16
 
               # LSP
               pkgs.nil
-              pkgs.zls_0_15
+              pkgs.zls_0_16
             ];
           };
         };
