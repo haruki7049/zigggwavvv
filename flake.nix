@@ -76,7 +76,7 @@
 
               # LSP
               pkgs.nil
-              pkgs.zls
+              pkgs.zls_0_15
             ];
           };
         };
