@@ -71,12 +71,10 @@
 
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = [
-              # Compiler
-              pkgs.zig_0_16
-
-              # LSP
-              pkgs.nil
-              pkgs.zls_0_16
+              pkgs.zig_0_16 # Zig compiler
+              pkgs.zls_0_16 # Zig LSP
+              pkgs.nil # Nix LSP
+              pkgs.zon2nix # zon2nix
             ];
           };
         };
