@@ -1,7 +1,6 @@
 {
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-    systems.url = "github:nix-systems/default";
     flake-compat.url = "github:edolstra/flake-compat";
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
@@ -16,7 +15,12 @@
   outputs =
     inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = import inputs.systems;
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
+
       imports = [
         inputs.treefmt-nix.flakeModule
       ];
@@ -33,7 +37,7 @@
               pkgs.zig_0_15.hook
             ];
 
-            postPatch = ''
+            postConfigure = ''
               ln -s ${pkgs.callPackage ./.deps.nix { }} $ZIG_GLOBAL_CACHE_DIR/p
             '';
           };
@@ -72,7 +76,7 @@
 
               # LSP
               pkgs.nil
-              pkgs.zls
+              pkgs.zls_0_15
             ];
           };
         };
