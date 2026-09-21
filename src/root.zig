@@ -429,6 +429,63 @@ pub fn Wave(comptime T: type) type {
             try std.testing.expectEqualSlices(T, expected_samples, result.samples);
         }
 
+        test "write and read multichannel samples" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{ 0, 0.5, 0.25, -0.5 };
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 2,
+                .bits = 16,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try wave.write(&w.writer, .{
+                .allocator = allocator,
+                .use_fact = true,
+                .use_peak = true,
+            });
+
+            // RIFF header (12) + fmt (24) + fact (12) + PEAK (8 + 8 + 8 * 2 channels) + data (8 + 8)
+            try std.testing.expectEqual(96, w.writer.buffered().len);
+
+            var reader = std.Io.Reader.fixed(w.writer.buffered());
+            const result = try Wave(T).read(allocator, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(2, result.channels);
+            try std.testing.expectEqual(samples.len, result.samples.len);
+            for (samples, result.samples) |expected, actual| {
+                try std.testing.expectApproxEqAbs(expected, actual, 1.0 / 32767.0);
+            }
+        }
+
+        test "write and read empty samples" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{};
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 16,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try wave.write(&w.writer, .{ .allocator = allocator });
+
+            var reader = std.Io.Reader.fixed(w.writer.buffered());
+            const result = try Wave(T).read(allocator, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(0, result.samples.len);
+        }
+
         test "read 16bit_pcm.wav" {
             const allocator = std.testing.allocator;
 
