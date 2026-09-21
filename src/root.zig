@@ -624,6 +624,49 @@ pub fn Wave(comptime T: type) type {
             try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
         }
 
+        test "write then read round-trips every supported format" {
+            const allocator = std.testing.allocator;
+
+            const cases = [_]struct { format_code: FormatCode, bits: u16, tolerance: T }{
+                .{ .format_code = .pcm, .bits = 8, .tolerance = 1.0 / 255.0 },
+                .{ .format_code = .pcm, .bits = 16, .tolerance = 1.0 / 32767.0 },
+                .{ .format_code = .pcm, .bits = 24, .tolerance = 1.0 / 8388607.0 },
+                .{ .format_code = .pcm, .bits = 32, .tolerance = 1.0 / 2147483647.0 },
+                .{ .format_code = .ieee_float, .bits = 32, .tolerance = 0 },
+                .{ .format_code = .ieee_float, .bits = 64, .tolerance = 0 },
+            };
+
+            // Non-negative values, so that 8bit PCM (unsigned) is covered as well
+            var samples = [_]T{ 0, 0.25, 0.5, 0.75 };
+
+            for (cases) |case| {
+                const wave = Wave(T).init(.{
+                    .format_code = case.format_code,
+                    .sample_rate = 44100,
+                    .channels = 1,
+                    .bits = case.bits,
+                    .samples = &samples,
+                });
+
+                var w = std.Io.Writer.Allocating.init(allocator);
+                defer w.deinit();
+                try wave.write(&w.writer, .{ .allocator = allocator });
+
+                var reader = std.Io.Reader.fixed(w.writer.buffered());
+                const result = try Wave(T).read(allocator, &reader);
+                defer result.deinit(allocator);
+
+                try std.testing.expectEqual(case.format_code, result.format_code);
+                try std.testing.expectEqual(case.bits, result.bits);
+                try std.testing.expectEqual(@as(u32, 44100), result.sample_rate);
+                try std.testing.expectEqual(@as(u16, 1), result.channels);
+                try std.testing.expectEqual(samples.len, result.samples.len);
+                for (samples, result.samples) |expected, actual| {
+                    try std.testing.expectApproxEqAbs(expected, actual, case.tolerance);
+                }
+            }
+        }
+
         test "write 32bit_pcm.wav" {
             const allocator = std.testing.allocator;
 
