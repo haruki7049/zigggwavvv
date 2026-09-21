@@ -26,15 +26,22 @@
       ];
 
       perSystem =
-        { pkgs, lib, ... }:
+        {
+          config,
+          lib,
+          pkgs,
+          ...
+        }:
         let
+          ZIG = pkgs.zig_0_16;
+
           zigggwavvv = pkgs.stdenv.mkDerivation {
             name = "zigggwavvv";
             src = lib.cleanSource ./.;
             doCheck = true;
 
             nativeBuildInputs = [
-              pkgs.zig_0_16.hook
+              ZIG.hook
             ];
 
             postConfigure = ''
@@ -51,7 +58,7 @@
 
             # Zig
             programs.zig.enable = true;
-            settings.formatter.zig.command = lib.getExe pkgs.zig_0_16;
+            settings.formatter.zig.command = lib.getExe ZIG;
 
             # GitHub Actions
             programs.actionlint.enable = true;
@@ -71,10 +78,14 @@
 
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = [
-              pkgs.zig_0_16 # Zig compiler
+              ZIG # Zig compiler
               pkgs.zls_0_16 # Zig LSP
               pkgs.nil # Nix LSP
               pkgs.zon2nix # zon2nix
+            ];
+
+            inputsFrom = [
+              config.treefmt.build.devShell
             ];
           };
         };
