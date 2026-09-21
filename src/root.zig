@@ -158,55 +158,8 @@ pub fn Wave(comptime T: type) type {
                     var samples_list: []T = try allocator.alloc(T, samples_count);
                     errdefer allocator.free(samples_list);
 
-                    for (0..samples_count) |i| {
-                        switch (bits) {
-                            8 => switch (format_code) {
-                                .pcm => {
-                                    const val: u8 = data[i];
-                                    samples_list[i] = @as(T, @floatFromInt(val)) / std.math.maxInt(u8);
-                                },
-                                else => return error.UnsupportedFormatCode,
-                            },
-                            16 => switch (format_code) {
-                                .pcm => {
-                                    const bytes_number = 2; // A i16 wave data's sample takes 2
-                                    const val: i16 = std.mem.readInt(i16, data[i * bytes_number .. (i + 1) * bytes_number][0..2], .little);
-                                    samples_list[i] = @as(T, @floatFromInt(val)) / std.math.maxInt(i16);
-                                },
-                                else => return error.UnsupportedFormatCode,
-                            },
-                            24 => switch (format_code) {
-                                .pcm => {
-                                    const bytes_number = 3; // A i24 wave data's sample takes 3
-                                    const val: i24 = std.mem.readInt(i24, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
-                                    samples_list[i] = @as(T, @floatFromInt(val)) / std.math.maxInt(i24);
-                                },
-                                else => return error.UnsupportedFormatCode,
-                            },
-                            32 => switch (format_code) {
-                                .pcm => {
-                                    const bytes_number = 4; // A i32 wave data's sample takes 4
-                                    const val: i32 = std.mem.readInt(i32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little);
-                                    samples_list[i] = @as(T, @floatFromInt(val)) / std.math.maxInt(i32);
-                                },
-                                .ieee_float => {
-                                    const bytes_number = 4;
-                                    const val: f32 = @bitCast(std.mem.readInt(u32, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little));
-                                    samples_list[i] = @as(T, val);
-                                },
-                                else => return error.UnsupportedFormatCode,
-                            },
-                            64 => switch (format_code) {
-                                .ieee_float => {
-                                    const bytes_number = 8;
-                                    const val: f64 = @bitCast(std.mem.readInt(u64, data[i * bytes_number .. (i + 1) * bytes_number][0..bytes_number], .little));
-                                    samples_list[i] = @as(T, val);
-                                },
-                                else => return error.UnsupportedFormatCode,
-                            },
-                            else => unreachable,
-                        }
-                    }
+                    for (0..samples_count) |i|
+                        samples_list[i] = try decodeSample(bits, format_code, data, i);
 
                     samples = samples_list;
                     data_read = true;
@@ -223,6 +176,57 @@ pub fn Wave(comptime T: type) type {
                 .bits = bits,
                 .samples = samples,
             });
+        }
+
+        /// Decodes the `i`-th sample of a data chunk into a normalized value of type T
+        fn decodeSample(bits: u16, format_code: FormatCode, data: []const u8, i: usize) error{UnsupportedFormatCode}!T {
+            switch (bits) {
+                8 => switch (format_code) {
+                    .pcm => {
+                        const val: u8 = data[i];
+                        return @as(T, @floatFromInt(val)) / std.math.maxInt(u8);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                16 => switch (format_code) {
+                    .pcm => {
+                        const bytes_number = 2; // A i16 wave data's sample takes 2
+                        const val: i16 = std.mem.readInt(i16, data[i * bytes_number ..][0..bytes_number], .little);
+                        return @as(T, @floatFromInt(val)) / std.math.maxInt(i16);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                24 => switch (format_code) {
+                    .pcm => {
+                        const bytes_number = 3; // A i24 wave data's sample takes 3
+                        const val: i24 = std.mem.readInt(i24, data[i * bytes_number ..][0..bytes_number], .little);
+                        return @as(T, @floatFromInt(val)) / std.math.maxInt(i24);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                32 => switch (format_code) {
+                    .pcm => {
+                        const bytes_number = 4; // A i32 wave data's sample takes 4
+                        const val: i32 = std.mem.readInt(i32, data[i * bytes_number ..][0..bytes_number], .little);
+                        return @as(T, @floatFromInt(val)) / std.math.maxInt(i32);
+                    },
+                    .ieee_float => {
+                        const bytes_number = 4;
+                        const val: f32 = @bitCast(std.mem.readInt(u32, data[i * bytes_number ..][0..bytes_number], .little));
+                        return @as(T, val);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                64 => switch (format_code) {
+                    .ieee_float => {
+                        const bytes_number = 8;
+                        const val: f64 = @bitCast(std.mem.readInt(u64, data[i * bytes_number ..][0..bytes_number], .little));
+                        return @as(T, val);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                else => unreachable,
+            }
         }
 
         /// Appends a chunk with a copy of `payload`, freeing the copy if appending fails
