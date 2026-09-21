@@ -67,10 +67,14 @@ pub fn Wave(comptime T: type) type {
             OutOfMemory,
             InvalidFormat,
             InvalidChannels,
+            SizeOverflow,
             UnsupportedFormatCode,
             UnsupportedBits,
             WriteFailed,
         };
+
+        /// The largest data chunk that leaves room for the other chunks within a RIFF size of 32 bits
+        const max_data_bytes: usize = std.math.maxInt(u32) - 1024;
 
         pub const InitOptions = struct {
             format_code: FormatCode,
@@ -345,6 +349,7 @@ pub fn Wave(comptime T: type) type {
         ///   - OutOfMemory: Allocation failed
         ///   - InvalidFormat: A chunk identifier could not be built
         ///   - InvalidChannels: The number of channels is 0
+        ///   - SizeOverflow: A size (block align, byte rate, frame count or data size) does not fit its RIFF field
         ///   - UnsupportedFormatCode: Audio format not supported for writing
         ///   - UnsupportedBits: Bit depth not supported for writing
         ///   - WriteFailed: The writer failed
@@ -371,8 +376,15 @@ pub fn Wave(comptime T: type) type {
             }
 
             const bits_per_sample: u16 = self.bits;
-            const block_align = self.channels * (bits_per_sample / 8);
-            const bytes_per_sec = self.sample_rate * block_align;
+            const bytes_per_sample: u16 = bits_per_sample / 8;
+
+            // The sizes below are stored in 16- and 32-bit fields, so reject values that do not fit
+            const block_align = std.math.mul(u16, self.channels, bytes_per_sample) catch return error.SizeOverflow;
+            const bytes_per_sec = std.math.mul(u32, self.sample_rate, block_align) catch return error.SizeOverflow;
+            const data_bytes = std.math.mul(usize, self.samples.len, bytes_per_sample) catch return error.SizeOverflow;
+            if (data_bytes > max_data_bytes)
+                return error.SizeOverflow;
+            const frame_count = std.math.cast(u32, self.samples.len / self.channels) orelse return error.SizeOverflow;
 
             // Wave fmt chunk
             {
@@ -396,7 +408,7 @@ pub fn Wave(comptime T: type) type {
                 defer fact_payload.deinit();
                 const fw = &fact_payload.writer;
 
-                try fw.writeInt(u32, @intCast(self.samples.len / self.channels), .little);
+                try fw.writeInt(u32, frame_count, .little);
                 try appendChunk(&chunk_list, options.allocator, "fact", try fact_payload.toOwnedSlice());
             }
 
@@ -703,6 +715,49 @@ pub fn Wave(comptime T: type) type {
                 .use_fact = true,
                 .use_peak = true,
             }));
+        }
+
+        test "write fails when block_align or bytes_per_sec does not fit" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{0.1};
+            const cases = [_]struct { sample_rate: u32, channels: u16, bits: u16, format_code: FormatCode }{
+                // block_align (u16) overflows
+                .{ .sample_rate = 44100, .channels = 40000, .bits = 64, .format_code = .ieee_float },
+                // bytes_per_sec (u32) overflows
+                .{ .sample_rate = 2_000_000_000, .channels = 1, .bits = 32, .format_code = .pcm },
+            };
+
+            for (cases) |c| {
+                const wave = Wave(T).init(.{
+                    .format_code = c.format_code,
+                    .sample_rate = c.sample_rate,
+                    .channels = c.channels,
+                    .bits = c.bits,
+                    .samples = &samples,
+                });
+
+                var w = std.Io.Writer.Allocating.init(allocator);
+                defer w.deinit();
+                try std.testing.expectError(error.SizeOverflow, wave.write(&w.writer, .{ .allocator = allocator }));
+            }
+        }
+
+        test "write accepts values close to the limits" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{0.1};
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 1_000_000_000,
+                .channels = 1,
+                .bits = 32,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try wave.write(&w.writer, .{ .allocator = allocator, .use_fact = true });
         }
 
         test "write fails with unsupported bits or format code even without samples" {
