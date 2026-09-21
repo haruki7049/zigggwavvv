@@ -351,7 +351,7 @@ pub fn Wave(comptime T: type) type {
                     switch (self.bits) {
                         8 => switch (self.format_code) {
                             .pcm => {
-                                const val: u8 = @intFromFloat(std.math.clamp(s * std.math.maxInt(u8), -std.math.maxInt(u8), std.math.maxInt(u8) - 1));
+                                const val: u8 = @intFromFloat(std.math.clamp(s * std.math.maxInt(u8), 0, std.math.maxInt(u8) - 1));
                                 try dw.writeInt(u8, val, .little);
                             },
                             else => return error.UnsupportedFormatCode,
@@ -706,6 +706,27 @@ pub fn Wave(comptime T: type) type {
 
             const expected = @embedFile("./assets/16bit_pcm.wav");
             try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+        }
+
+        test "write clamps negative samples to zero for 8bit pcm" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{ -1, -0.5, 0 };
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 8,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try wave.write(&w.writer, .{ .allocator = allocator });
+
+            // RIFF header (12) + fmt chunk (24) + data chunk header (8); the data chunk is then padded to an even length
+            const data_offset = 44;
+            try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 0, 0 }, w.writer.buffered()[data_offset .. data_offset + samples.len]);
         }
 
         test "write 24bit_pcm.wav" {
