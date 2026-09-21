@@ -72,9 +72,10 @@ pub fn Wave(comptime T: type) type {
         /// converting samples to normalized values of the specified type T. Supports PCM
         /// and IEEE float formats with 8, 16, 24, 32, and 64-bit sample depths.
         ///
+        /// The sample data type is the type parameter T of `Wave(T)` (e.g., f64, f80, f128).
+        ///
         /// Parameters:
         ///   - allocator: Memory allocator for sample data
-        ///   - T: Comptime type parameter specifying the sample data type (e.g., f64, f80, f128)
         ///   - reader: Reader interface providing the WAV file data
         ///
         /// Returns:
@@ -114,7 +115,7 @@ pub fn Wave(comptime T: type) type {
                     if (format_code != .pcm and format_code != .ieee_float)
                         return error.UnsupportedFormatCode;
 
-                    // We only support 8, 16, 24 and 32 bits
+                    // We only support 8, 16, 24, 32 and 64 bits
                     const supported_bits: []const u16 = &[_]u16{ 8, 16, 24, 32, 64 };
                     for (supported_bits) |v| {
                         if (v == bits)
@@ -217,8 +218,7 @@ pub fn Wave(comptime T: type) type {
         /// optionally fact and PEAK chunks).
         ///
         /// Parameters:
-        ///   - T: Comptime type parameter specifying the sample data type (e.g., f64, f80, f128)
-        ///   - wave: Wave(T) structure containing the audio data to write
+        ///   - self: The Wave(T) structure containing the audio data to write
         ///   - writer: Writer interface where the WAV file will be written
         ///   - options: WriteOptions specifying allocator and optional chunks
         ///
