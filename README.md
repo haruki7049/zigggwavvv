@@ -41,21 +41,23 @@ exe.root_module.addImport("zigggwavvv", zigggwavvv.module("zigggwavvv"));
 
 ### Reading a WAV File
 
+`read` parses the bytes that are already in the reader's buffer, so load the whole file into memory and wrap it with `std.Io.Reader.fixed`. A file reader that has not been filled yet is rejected with `error.InvalidFormat`.
+
 ```zig
 const std = @import("std");
 const zigggwavvv = @import("zigggwavvv");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
-    // Open and read a WAV file
-    const file = try std.fs.cwd().openFile("input.wav", .{});
-    defer file.close();
+    // Load the whole WAV file into memory
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, "input.wav", allocator, .unlimited);
+    defer allocator.free(bytes);
 
     // Parse the file into a Wave structure with f128 precision
-    const wave = try zigggwavvv.Wave(f128).read(allocator, file.reader());
+    var reader = std.Io.Reader.fixed(bytes);
+    const wave = try zigggwavvv.Wave(f128).read(allocator, &reader);
     defer wave.deinit(allocator);
 
     // Access samples (f128)
@@ -63,19 +65,21 @@ pub fn main() !void {
         // Process audio data...
         _ = sample;
     }
+    std.debug.print("read {d} samples\n", .{wave.samples.len});
 }
 ```
 
 ### Writing a WAV File
 
+`write` takes a `*std.Io.Writer`. When writing to a file, remember to `flush` the writer.
+
 ```zig
 const std = @import("std");
 const zigggwavvv = @import("zigggwavvv");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
     // Define audio properties and samples
     var samples = [_]f128{ 0.0, 0.5, -0.5 };
@@ -88,16 +92,20 @@ pub fn main() !void {
     };
 
     // Create output file
-    const file = try std.fs.cwd().createFile("output.wav", .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().createFile(io, "output.wav", .{});
+    defer file.close(io);
+
+    var buffer: [4096]u8 = undefined;
+    var file_writer = file.writer(io, &buffer);
 
     // Write the WAV file with optional chunks
-    try wave.write(file.writer(), .{
+    try wave.write(&file_writer.interface, .{
         .allocator = allocator,
         .use_fact = false,
         .use_peak = true,
         .peak_timestamp = 0, // Unix time
     });
+    try file_writer.interface.flush();
 }
 ```
 
