@@ -1125,6 +1125,68 @@ pub fn Wave(comptime T: type) type {
             var reader = std.Io.Reader.fixed(bytes);
             try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
         }
+
+        // The tests below pin down how `read` behaves with different `reader` types.
+        // `read` only relies on `reader.buffered()` (through riff_zig), so it sees
+        // the bytes already in the reader's buffer and never fills the reader itself.
+
+        test "read accepts any type with a buffered() method" {
+            const allocator = std.testing.allocator;
+
+            const BufferedOnly = struct {
+                bytes: []const u8,
+
+                pub fn buffered(self: @This()) []const u8 {
+                    return self.bytes;
+                }
+            };
+
+            const wavedata = @embedFile("./assets/16bit_pcm.wav");
+            const result = try Wave(T).read(allocator, BufferedOnly{ .bytes = wavedata });
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(16, result.bits);
+        }
+
+        test "read fails on an empty reader" {
+            const allocator = std.testing.allocator;
+
+            var reader = std.Io.Reader.fixed("");
+            try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+        }
+
+        test "read from a file reader needs the buffer to be filled first" {
+            const allocator = std.testing.allocator;
+            const io = std.testing.io;
+
+            const wavedata = @embedFile("./assets/16bit_pcm.wav");
+
+            var tmp = std.testing.tmpDir(.{});
+            defer tmp.cleanup();
+            try tmp.dir.writeFile(io, .{ .sub_path = "input.wav", .data = wavedata });
+
+            const file = try tmp.dir.openFile(io, "input.wav", .{});
+            defer file.close(io);
+
+            // Nothing has been read from the file yet, so `buffered()` is empty
+            {
+                var buffer: [wavedata.len]u8 = undefined;
+                var file_reader = file.reader(io, &buffer);
+                try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &file_reader.interface));
+            }
+
+            // Once the whole file is in the buffer, the same reader type works
+            {
+                var buffer: [wavedata.len]u8 = undefined;
+                var file_reader = file.reader(io, &buffer);
+                try file_reader.interface.fill(wavedata.len);
+
+                const result = try Wave(T).read(allocator, &file_reader.interface);
+                defer result.deinit(allocator);
+
+                try std.testing.expectEqual(16, result.bits);
+            }
+        }
     };
 }
 
