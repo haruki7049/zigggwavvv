@@ -34,6 +34,9 @@ pub const FormatCode = enum(u16) {
 
 /// WAV structure representing audio properties and samples of type T
 pub fn Wave(comptime T: type) type {
+    if (@typeInfo(T) != .float)
+        @compileError("Wave(T) requires a floating point type, found " ++ @typeName(T));
+
     return struct {
         const Self = @This();
 
