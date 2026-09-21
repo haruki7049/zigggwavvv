@@ -51,6 +51,25 @@ pub fn Wave(comptime T: type) type {
             allocator.free(self.samples);
         }
 
+        /// Errors returned by `read`
+        pub const ReadError = error{
+            OutOfMemory,
+            InvalidFormat,
+            SizeMismatch,
+            UnsupportedFormatCode,
+            UnsupportedBits,
+        };
+
+        /// Errors returned by `write`
+        pub const WriteError = error{
+            OutOfMemory,
+            InvalidFormat,
+            InvalidChannels,
+            UnsupportedFormatCode,
+            UnsupportedBits,
+            WriteFailed,
+        };
+
         pub const InitOptions = struct {
             format_code: FormatCode,
             sample_rate: u32,
@@ -84,12 +103,18 @@ pub fn Wave(comptime T: type) type {
         /// Returns:
         ///   - Wave(T) structure containing the parsed audio data with samples of type T
         ///
-        /// Errors:
+        /// Errors (see `ReadError`):
+        ///   - OutOfMemory: Allocation failed
         ///   - InvalidFormat: Not a valid WAVE file
+        ///   - SizeMismatch: A chunk size does not match the file size
         ///   - UnsupportedFormatCode: Audio format not supported
         ///   - UnsupportedBits: Bit depth not supported
-        pub fn read(allocator: std.mem.Allocator, reader: anytype) anyerror!Self {
-            const root_chunk = try riff.read(allocator, reader);
+        pub fn read(allocator: std.mem.Allocator, reader: anytype) ReadError!Self {
+            const root_chunk = riff.read(allocator, reader) catch |err| return switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                error.SizeMismatch => error.SizeMismatch,
+                else => error.InvalidFormat,
+            };
             defer root_chunk.deinit(allocator);
 
             const r = switch (root_chunk) {
@@ -261,15 +286,18 @@ pub fn Wave(comptime T: type) type {
         ///   - writer: Writer interface where the WAV file will be written
         ///   - options: WriteOptions specifying allocator and optional chunks
         ///
-        /// Errors:
+        /// Errors (see `WriteError`):
+        ///   - OutOfMemory: Allocation failed
+        ///   - InvalidFormat: A chunk identifier could not be built
+        ///   - InvalidChannels: The number of channels is 0
         ///   - UnsupportedFormatCode: Audio format not supported for writing
         ///   - UnsupportedBits: Bit depth not supported for writing
-        ///   - InvalidChannels: The number of channels is 0
+        ///   - WriteFailed: The writer failed
         pub fn write(
             self: Self,
             writer: anytype,
             options: WriteOptions,
-        ) anyerror!void {
+        ) WriteError!void {
             if (self.channels == 0)
                 return error.InvalidChannels;
 
@@ -406,7 +434,10 @@ pub fn Wave(comptime T: type) type {
             const wave_riff = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = try chunk_list.toOwnedSlice(options.allocator) } };
             defer wave_riff.deinit(options.allocator);
 
-            try riff.write(wave_riff, options.allocator, writer);
+            riff.write(wave_riff, options.allocator, writer) catch |err| return switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                else => error.WriteFailed,
+            };
         }
 
         test "read 8bit_pcm.wav" {
