@@ -1,8 +1,3 @@
----
-name: pr-workflow
-description: Use this skill when creating commits, preparing Pull Requests (PRs), formatting code, and executing pre-submission verification steps for zigggwavvv.
----
-
 # Pull Request & Commit Workflow for `zigggwavvv`
 
 This skill defines the procedures for code verification, commit creation, and pull request submission.

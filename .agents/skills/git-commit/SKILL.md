@@ -1,8 +1,3 @@
----
-name: git-commit
-description: Repository commit conventions and prohibition on unprompted commit/push proposals.
----
-
 # Git Commit Policy & Conventions
 
 Read this to understand the commit policy and message conventions for `zigggwavvv`.

@@ -1,8 +1,3 @@
----
-name: verify
-description: Verification principles and reporting format for code, configuration, or documentation changes.
----
-
 # Verify
 
 Read this after making code, config, or documentation changes.

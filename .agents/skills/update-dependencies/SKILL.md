@@ -1,8 +1,3 @@
----
-name: update-dependencies
-description: Use this skill when updating external Zig package dependencies (such as riff_zig), synchronizing Nix lockfiles (.deps.nix via zon2nix), updating flake.lock, or modifying build.zig.zon.
----
-
 # External Dependency Update Workflow
 
 ## Zig package dependencies (`riff_zig`)
