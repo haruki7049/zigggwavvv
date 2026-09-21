@@ -39,10 +39,10 @@ ______________________________________________________________________
 When asked to check status, assess the situation, or understand workspace context:
 
 1. **Local Git State**: Inspect working tree (`git status -s -b`) and recent commits (`git log -n 5 --oneline`).
-1. **GitHub PRs**: Check PR status (`gh pr status`) and current PR details (`gh pr view`).
-1. **GitHub Issues**: Check relevant open issues (`gh issue list --limit 5`).
+1. **GitHub PRs (always display)**: List **all** open PRs (`gh pr list`) and check the current branch's PR (`gh pr status`). Never skip this step, even when the local state is clean.
+1. **GitHub Issues (always display)**: List **all** open issues (`gh issue list`). Never skip this step.
 1. **Environment Health**: Verify build and test status (`treefmt --fail-on-change`, `zig build`, `zig build test`).
-1. **Synthesis**: Report a concise, structured status covering local state, remote GitHub state, and environment health.
+1. **Synthesis**: Report a concise, structured status covering local state, remote GitHub state, and environment health. The report **must** include the open PR and Issue lists (number, title, and state), or explicitly state that there are none.
 
 ______________________________________________________________________
 
