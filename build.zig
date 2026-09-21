@@ -1,5 +1,11 @@
 const std = @import("std");
 
+/// Re-export of `FormatCode` for build scripts.
+///
+/// A package can `@import` a dependency's `build.zig` only for its public declarations, so this is the
+/// build-time entry point of zigggwavvv. Dependents such as lightmix use it in their `build.zig`
+/// (`const z_wav = @import("zigggwavvv");` and `z_wav.FormatCode`). Do not remove or rename it without
+/// treating that as a breaking change.
 pub const FormatCode = @import("./src/root.zig").FormatCode;
 
 pub fn build(b: *std.Build) void {
