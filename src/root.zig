@@ -56,6 +56,8 @@ pub fn Wave(comptime T: type) type {
             OutOfMemory,
             InvalidFormat,
             SizeMismatch,
+            ReadFailed,
+            EndOfStream,
             UnsupportedFormatCode,
             UnsupportedBits,
         };
@@ -107,12 +109,16 @@ pub fn Wave(comptime T: type) type {
         ///   - OutOfMemory: Allocation failed
         ///   - InvalidFormat: Not a valid WAVE file
         ///   - SizeMismatch: A chunk size does not match the file size
+        ///   - ReadFailed: The reader failed
+        ///   - EndOfStream: The reader ended before the whole file was read
         ///   - UnsupportedFormatCode: Audio format not supported
         ///   - UnsupportedBits: Bit depth not supported
         pub fn read(allocator: std.mem.Allocator, reader: anytype) ReadError!Self {
             const root_chunk = riff.read(allocator, reader) catch |err| return switch (err) {
                 error.OutOfMemory => error.OutOfMemory,
                 error.SizeMismatch => error.SizeMismatch,
+                error.ReadFailed => error.ReadFailed,
+                error.EndOfStream => error.EndOfStream,
                 else => error.InvalidFormat,
             };
             defer root_chunk.deinit(allocator);
