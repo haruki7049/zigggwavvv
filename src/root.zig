@@ -71,6 +71,7 @@ pub fn Wave(comptime T: type) type {
             OutOfMemory,
             InvalidFormat,
             InvalidChannels,
+            InvalidSampleCount,
             SizeOverflow,
             UnsupportedFormatCode,
             UnsupportedBits,
@@ -357,6 +358,7 @@ pub fn Wave(comptime T: type) type {
         ///   - OutOfMemory: Allocation failed
         ///   - InvalidFormat: A chunk identifier could not be built
         ///   - InvalidChannels: The number of channels is 0
+        ///   - InvalidSampleCount: The number of samples is not a multiple of the number of channels
         ///   - SizeOverflow: A size (block align, byte rate, frame count or data size) does not fit its RIFF field
         ///   - UnsupportedFormatCode: Audio format not supported for writing
         ///   - UnsupportedBits: Bit depth not supported for writing
@@ -368,6 +370,9 @@ pub fn Wave(comptime T: type) type {
         ) WriteError!void {
             if (self.channels == 0)
                 return error.InvalidChannels;
+
+            if (self.samples.len % self.channels != 0)
+                return error.InvalidSampleCount;
 
             // Validate the format before writing anything, so that it is rejected even when there are no samples
             switch (self.bits) {
@@ -728,8 +733,8 @@ pub fn Wave(comptime T: type) type {
         test "write fails when block_align or bytes_per_sec does not fit" {
             const allocator = std.testing.allocator;
 
-            var samples = [_]T{0.1};
-            const cases = [_]struct { sample_rate: u32, channels: u16, bits: u16, format_code: FormatCode }{
+            const Case = struct { sample_rate: u32, channels: u16, bits: u16, format_code: FormatCode };
+            const cases = [_]Case{
                 // block_align (u16) overflows
                 .{ .sample_rate = 44100, .channels = 40000, .bits = 64, .format_code = .ieee_float },
                 // bytes_per_sec (u32) overflows
@@ -737,12 +742,18 @@ pub fn Wave(comptime T: type) type {
             };
 
             for (cases) |c| {
+                // The sample count must be a multiple of the channels so that InvalidSampleCount
+                // does not shadow the SizeOverflow this test checks for
+                const samples = try allocator.alloc(T, c.channels);
+                defer allocator.free(samples);
+                @memset(samples, 0.1);
+
                 const wave = Wave(T).init(.{
                     .format_code = c.format_code,
                     .sample_rate = c.sample_rate,
                     .channels = c.channels,
                     .bits = c.bits,
-                    .samples = &samples,
+                    .samples = samples,
                 });
 
                 var w = std.Io.Writer.Allocating.init(allocator);
@@ -766,6 +777,27 @@ pub fn Wave(comptime T: type) type {
             var w = std.Io.Writer.Allocating.init(allocator);
             defer w.deinit();
             try wave.write(&w.writer, .{ .allocator = allocator, .use_fact = true });
+        }
+
+        test "write fails when the sample count is not a multiple of the channels" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{ 0.1, 0.2, 0.3 };
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 2,
+                .bits = 16,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try std.testing.expectError(error.InvalidSampleCount, wave.write(&w.writer, .{
+                .allocator = allocator,
+                .use_fact = true,
+            }));
+            try std.testing.expectEqual(0, w.writer.buffered().len);
         }
 
         test "write fails with unsupported bits or format code even without samples" {
