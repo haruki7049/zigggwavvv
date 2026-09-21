@@ -101,6 +101,7 @@ pub fn Wave(comptime T: type) type {
             var samples: []T = undefined;
             var fmt_read = false;
             var data_read = false;
+            errdefer if (data_read) allocator.free(samples);
 
             for (r.chunks) |c| {
                 // Skip chunks that are not plain chunks, such as LIST
@@ -137,6 +138,10 @@ pub fn Wave(comptime T: type) type {
 
                     // The fmt chunk must precede the data chunk
                     if (!fmt_read)
+                        return error.InvalidFormat;
+
+                    // A WAV file has exactly one data chunk
+                    if (data_read)
                         return error.InvalidFormat;
 
                     const samples_count = switch (bits) {
@@ -1064,6 +1069,21 @@ pub fn Wave(comptime T: type) type {
                 result.deinit(allocator);
                 return error.TestUnexpectedResult;
             } else |_| {}
+        }
+
+        test "read fails with multiple data chunks" {
+            const allocator = std.testing.allocator;
+
+            const chunks = [_]riff.Chunk{
+                try testChunk("fmt ", &test_fmt_payload),
+                try testChunk("data", &test_data_payload),
+                try testChunk("data", &test_data_payload),
+            };
+            const bytes = try testBuildWave(allocator, &chunks);
+            defer allocator.free(bytes);
+
+            var reader = std.Io.Reader.fixed(bytes);
+            try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
         }
     };
 }
