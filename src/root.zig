@@ -229,14 +229,13 @@ pub fn Wave(comptime T: type) type {
             }
         }
 
-        /// Appends a chunk with a copy of `payload`, freeing the copy if appending fails
+        /// Appends a chunk that takes ownership of `data`, freeing it if appending fails
         fn appendChunk(
             list: *std.array_list.Aligned(riff.Chunk, null),
             allocator: std.mem.Allocator,
             id: []const u8,
-            payload: []const u8,
+            data: []u8,
         ) !void {
-            const data = try allocator.dupe(u8, payload);
             errdefer allocator.free(data);
             try list.append(allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new(id), .data = data } });
         }
@@ -354,7 +353,7 @@ pub fn Wave(comptime T: type) type {
                 try fw.writeInt(u16, block_align, .little);
                 try fw.writeInt(u16, bits_per_sample, .little);
 
-                try appendChunk(&chunk_list, options.allocator, "fmt ", fmt_payload.written());
+                try appendChunk(&chunk_list, options.allocator, "fmt ", try fmt_payload.toOwnedSlice());
             }
 
             // Wave fact chunk
@@ -364,7 +363,7 @@ pub fn Wave(comptime T: type) type {
                 const fw = &fact_payload.writer;
 
                 try fw.writeInt(u32, @intCast(self.samples.len / self.channels), .little);
-                try appendChunk(&chunk_list, options.allocator, "fact", fact_payload.written());
+                try appendChunk(&chunk_list, options.allocator, "fact", try fact_payload.toOwnedSlice());
             }
 
             // Wave PEAK chunk
@@ -396,7 +395,7 @@ pub fn Wave(comptime T: type) type {
                     try pw.writeInt(u32, max_pos, .little);
                 }
 
-                try appendChunk(&chunk_list, options.allocator, "PEAK", peak_payload.written());
+                try appendChunk(&chunk_list, options.allocator, "PEAK", try peak_payload.toOwnedSlice());
             }
 
             // Wave data chunk
@@ -408,7 +407,7 @@ pub fn Wave(comptime T: type) type {
                 for (self.samples) |s|
                     try encodeSample(self.bits, self.format_code, s, dw);
 
-                try appendChunk(&chunk_list, options.allocator, "data", data_payload.written());
+                try appendChunk(&chunk_list, options.allocator, "data", try data_payload.toOwnedSlice());
             }
 
             const wave_riff = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = try chunk_list.toOwnedSlice(options.allocator) } };
