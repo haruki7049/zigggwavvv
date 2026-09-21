@@ -98,17 +98,28 @@ pub fn Wave(comptime T: type) type {
             var channels: u16 = undefined;
             var bits: u16 = undefined;
             var samples: []T = undefined;
+            var fmt_read = false;
+            var data_read = false;
 
             for (r.chunks) |c| {
-                const id = c.chunk.four_cc.inner;
+                // Skip chunks that are not plain chunks, such as LIST
+                const chunk = switch (c) {
+                    .chunk => |chunk| chunk,
+                    else => continue,
+                };
+                const id = chunk.four_cc.inner;
 
                 if (std.mem.eql(u8, &id, "fmt ")) {
-                    const data = c.chunk.data;
+                    const data = chunk.data;
+
+                    if (data.len < 16)
+                        return error.InvalidFormat;
 
                     format_code = @enumFromInt(std.mem.readInt(u16, data[0..2], .little));
                     channels = std.mem.readInt(u16, data[2..4], .little);
                     sample_rate = std.mem.readInt(u32, data[4..8], .little);
                     bits = std.mem.readInt(u16, data[14..16], .little);
+                    fmt_read = true;
 
                     // We only support PCM and IEEE Float
                     if (format_code != .pcm and format_code != .ieee_float)
@@ -121,7 +132,11 @@ pub fn Wave(comptime T: type) type {
                             break;
                     } else return error.UnsupportedBits;
                 } else if (std.mem.eql(u8, &id, "data")) {
-                    const data = c.chunk.data;
+                    const data = chunk.data;
+
+                    // The fmt chunk must precede the data chunk
+                    if (!fmt_read)
+                        return error.InvalidFormat;
 
                     const samples_count = switch (bits) {
                         8 => data.len, // 8bit
@@ -185,8 +200,12 @@ pub fn Wave(comptime T: type) type {
                     }
 
                     samples = samples_list;
+                    data_read = true;
                 }
             }
+
+            if (!fmt_read or !data_read)
+                return error.InvalidFormat;
 
             return Wave(T).init(.{
                 .format_code = format_code,
@@ -728,6 +747,103 @@ pub fn Wave(comptime T: type) type {
 
             const expected = @embedFile("./assets/64bit_ieee_float.wav");
             try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+        }
+
+        fn testChunk(id: []const u8, data: []const u8) !riff.Chunk {
+            return .{ .chunk = .{ .four_cc = try riff.FourCC.new(id), .data = data } };
+        }
+
+        fn testBuildWave(allocator: std.mem.Allocator, chunks: []const riff.Chunk) ![]u8 {
+            const root = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = chunks } };
+            var w = std.Io.Writer.Allocating.init(allocator);
+            errdefer w.deinit();
+            try riff.write(root, allocator, &w.writer);
+            return w.toOwnedSlice();
+        }
+
+        // 16bit PCM, mono, 44100Hz
+        const test_fmt_payload = [_]u8{ 1, 0, 1, 0, 0x44, 0xAC, 0, 0, 0x88, 0x58, 0x01, 0, 2, 0, 16, 0 };
+        // Two 16bit samples: 0 and 32767
+        const test_data_payload = [_]u8{ 0, 0, 0xFF, 0x7F };
+
+        test "read ignores a LIST chunk" {
+            const allocator = std.testing.allocator;
+
+            const list_children = [_]riff.Chunk{try testChunk("ISFT", "zigggwavvv\x00")};
+            const chunks = [_]riff.Chunk{
+                try testChunk("fmt ", &test_fmt_payload),
+                .{ .list = .{ .four_cc = try riff.FourCC.new("INFO"), .chunks = &list_children } },
+                try testChunk("data", &test_data_payload),
+            };
+            const bytes = try testBuildWave(allocator, &chunks);
+            defer allocator.free(bytes);
+
+            var reader = std.Io.Reader.fixed(bytes);
+            const result = try Wave(T).read(allocator, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqualSlices(T, &[_]T{ 0, 1 }, result.samples);
+        }
+
+        test "read fails without a fmt chunk" {
+            const allocator = std.testing.allocator;
+
+            const chunks = [_]riff.Chunk{try testChunk("data", &test_data_payload)};
+            const bytes = try testBuildWave(allocator, &chunks);
+            defer allocator.free(bytes);
+
+            var reader = std.Io.Reader.fixed(bytes);
+            try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+        }
+
+        test "read fails without a data chunk" {
+            const allocator = std.testing.allocator;
+
+            const chunks = [_]riff.Chunk{try testChunk("fmt ", &test_fmt_payload)};
+            const bytes = try testBuildWave(allocator, &chunks);
+            defer allocator.free(bytes);
+
+            var reader = std.Io.Reader.fixed(bytes);
+            try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+        }
+
+        test "read fails when the data chunk precedes the fmt chunk" {
+            const allocator = std.testing.allocator;
+
+            const chunks = [_]riff.Chunk{
+                try testChunk("data", &test_data_payload),
+                try testChunk("fmt ", &test_fmt_payload),
+            };
+            const bytes = try testBuildWave(allocator, &chunks);
+            defer allocator.free(bytes);
+
+            var reader = std.Io.Reader.fixed(bytes);
+            try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+        }
+
+        test "read fails with a fmt chunk shorter than 16 bytes" {
+            const allocator = std.testing.allocator;
+
+            const chunks = [_]riff.Chunk{
+                try testChunk("fmt ", test_fmt_payload[0..8]),
+                try testChunk("data", &test_data_payload),
+            };
+            const bytes = try testBuildWave(allocator, &chunks);
+            defer allocator.free(bytes);
+
+            var reader = std.Io.Reader.fixed(bytes);
+            try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+        }
+
+        test "read fails with a truncated file" {
+            const allocator = std.testing.allocator;
+
+            const wavedata = @embedFile("./assets/16bit_pcm.wav");
+            var reader = std.Io.Reader.fixed(wavedata[0 .. wavedata.len - 4]);
+            if (Wave(T).read(allocator, &reader)) |result| {
+                result.deinit(allocator);
+                return error.TestUnexpectedResult;
+            } else |_| {}
         }
     };
 }
