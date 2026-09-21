@@ -241,6 +241,52 @@ pub fn Wave(comptime T: type) type {
             try list.append(allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new(id), .data = data } });
         }
 
+        /// Encodes one normalized sample of type T into `w` as the given (bits, format_code)
+        fn encodeSample(bits: u16, format_code: FormatCode, s: T, w: *std.Io.Writer) !void {
+            switch (bits) {
+                8 => switch (format_code) {
+                    .pcm => {
+                        const val: u8 = @intFromFloat(std.math.clamp(s * std.math.maxInt(u8), 0, std.math.maxInt(u8) - 1));
+                        try w.writeInt(u8, val, .little);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                16 => switch (format_code) {
+                    .pcm => {
+                        const val: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16) - 1));
+                        try w.writeInt(i16, val, .little);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                24 => switch (format_code) {
+                    .pcm => {
+                        const val: i24 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24) - 1));
+                        try w.writeInt(i24, val, .little);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                32 => switch (format_code) {
+                    .pcm => {
+                        const val: i32 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32) - 1));
+                        try w.writeInt(i32, val, .little);
+                    },
+                    .ieee_float => {
+                        const val: f32 = @floatCast(s);
+                        try w.writeInt(u32, @bitCast(val), .little);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                64 => switch (format_code) {
+                    .ieee_float => {
+                        const val: f64 = @floatCast(s);
+                        try w.writeInt(u64, @bitCast(val), .little);
+                    },
+                    else => return error.UnsupportedFormatCode,
+                },
+                else => return error.UnsupportedBits,
+            }
+        }
+
         /// Options for writing WAV files
         pub const WriteOptions = struct {
             /// Memory allocator for temporary buffers during writing
@@ -359,50 +405,8 @@ pub fn Wave(comptime T: type) type {
                 defer data_payload.deinit();
                 const dw = &data_payload.writer;
 
-                for (self.samples) |s| {
-                    switch (self.bits) {
-                        8 => switch (self.format_code) {
-                            .pcm => {
-                                const val: u8 = @intFromFloat(std.math.clamp(s * std.math.maxInt(u8), 0, std.math.maxInt(u8) - 1));
-                                try dw.writeInt(u8, val, .little);
-                            },
-                            else => return error.UnsupportedFormatCode,
-                        },
-                        16 => switch (self.format_code) {
-                            .pcm => {
-                                const val: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16) - 1));
-                                try dw.writeInt(i16, val, .little);
-                            },
-                            else => return error.UnsupportedFormatCode,
-                        },
-                        24 => switch (self.format_code) {
-                            .pcm => {
-                                const val: i24 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24) - 1));
-                                try dw.writeInt(i24, val, .little);
-                            },
-                            else => return error.UnsupportedFormatCode,
-                        },
-                        32 => switch (self.format_code) {
-                            .pcm => {
-                                const val: i32 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32) - 1));
-                                try dw.writeInt(i32, val, .little);
-                            },
-                            .ieee_float => {
-                                const val: f32 = @floatCast(s);
-                                try dw.writeInt(u32, @bitCast(val), .little);
-                            },
-                            else => return error.UnsupportedFormatCode,
-                        },
-                        64 => switch (self.format_code) {
-                            .ieee_float => {
-                                const val: f64 = @floatCast(s);
-                                try dw.writeInt(u64, @bitCast(val), .little);
-                            },
-                            else => return error.UnsupportedFormatCode,
-                        },
-                        else => return error.UnsupportedBits,
-                    }
-                }
+                for (self.samples) |s|
+                    try encodeSample(self.bits, self.format_code, s, dw);
 
                 try appendChunk(&chunk_list, options.allocator, "data", data_payload.written());
             }
