@@ -197,6 +197,18 @@ pub fn Wave(comptime T: type) type {
             });
         }
 
+        /// Appends a chunk with a copy of `payload`, freeing the copy if appending fails
+        fn appendChunk(
+            list: *std.array_list.Aligned(riff.Chunk, null),
+            allocator: std.mem.Allocator,
+            id: []const u8,
+            payload: []const u8,
+        ) !void {
+            const data = try allocator.dupe(u8, payload);
+            errdefer allocator.free(data);
+            try list.append(allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new(id), .data = data } });
+        }
+
         /// Options for writing WAV files
         pub const WriteOptions = struct {
             /// Memory allocator for temporary buffers during writing
@@ -225,12 +237,28 @@ pub fn Wave(comptime T: type) type {
         /// Errors:
         ///   - UnsupportedFormatCode: Audio format not supported for writing
         ///   - UnsupportedBits: Bit depth not supported for writing
+        ///   - InvalidChannels: The number of channels is 0
         pub fn write(
             self: Self,
             writer: anytype,
             options: WriteOptions,
         ) anyerror!void {
+            if (self.channels == 0)
+                return error.InvalidChannels;
+
+            // Validate the format before writing anything, so that it is rejected even when there are no samples
+            switch (self.bits) {
+                8, 16, 24 => if (self.format_code != .pcm) return error.UnsupportedFormatCode,
+                32 => if (self.format_code != .pcm and self.format_code != .ieee_float) return error.UnsupportedFormatCode,
+                64 => if (self.format_code != .ieee_float) return error.UnsupportedFormatCode,
+                else => return error.UnsupportedBits,
+            }
+
             var chunk_list: std.array_list.Aligned(riff.Chunk, null) = .empty;
+            errdefer {
+                for (chunk_list.items) |c| c.deinit(options.allocator);
+                chunk_list.deinit(options.allocator);
+            }
 
             const bits_per_sample: u16 = self.bits;
             const block_align = self.channels * (bits_per_sample / 8);
@@ -249,7 +277,7 @@ pub fn Wave(comptime T: type) type {
                 try fw.writeInt(u16, block_align, .little);
                 try fw.writeInt(u16, bits_per_sample, .little);
 
-                try chunk_list.append(options.allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new("fmt "), .data = try options.allocator.dupe(u8, fmt_payload.written()) } });
+                try appendChunk(&chunk_list, options.allocator, "fmt ", fmt_payload.written());
             }
 
             // Wave fact chunk
@@ -259,7 +287,7 @@ pub fn Wave(comptime T: type) type {
                 const fw = &fact_payload.writer;
 
                 try fw.writeInt(u32, @intCast(self.samples.len / self.channels), .little);
-                try chunk_list.append(options.allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new("fact"), .data = try options.allocator.dupe(u8, fact_payload.written()) } });
+                try appendChunk(&chunk_list, options.allocator, "fact", fact_payload.written());
             }
 
             // Wave PEAK chunk
@@ -291,7 +319,7 @@ pub fn Wave(comptime T: type) type {
                     try pw.writeInt(u32, max_pos, .little);
                 }
 
-                try chunk_list.append(options.allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new("PEAK"), .data = try options.allocator.dupe(u8, peak_payload.written()) } });
+                try appendChunk(&chunk_list, options.allocator, "PEAK", peak_payload.written());
             }
 
             // Wave data chunk
@@ -345,7 +373,7 @@ pub fn Wave(comptime T: type) type {
                     }
                 }
 
-                try chunk_list.append(options.allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new("data"), .data = try options.allocator.dupe(u8, data_payload.written()) } });
+                try appendChunk(&chunk_list, options.allocator, "data", data_payload.written());
             }
 
             const wave_riff = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = try chunk_list.toOwnedSlice(options.allocator) } };
@@ -554,6 +582,77 @@ pub fn Wave(comptime T: type) type {
 
             const expected = @embedFile("./assets/8bit_pcm.wav");
             try std.testing.expectEqualSlices(u8, expected, w.writer.buffered());
+        }
+
+        test "write fails with zero channels" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{};
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 0,
+                .bits = 16,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try std.testing.expectError(error.InvalidChannels, wave.write(&w.writer, .{
+                .allocator = allocator,
+                .use_fact = true,
+                .use_peak = true,
+            }));
+        }
+
+        test "write fails with unsupported bits or format code even without samples" {
+            const allocator = std.testing.allocator;
+
+            const cases = [_]struct { FormatCode, u16, anyerror }{
+                .{ .pcm, 12, error.UnsupportedBits },
+                .{ .pcm, 64, error.UnsupportedFormatCode },
+                .{ .ieee_float, 16, error.UnsupportedFormatCode },
+                .{ @enumFromInt(2), 16, error.UnsupportedFormatCode },
+            };
+
+            for (cases) |case| {
+                var samples = [_]T{};
+                const wave = Wave(T).init(.{
+                    .format_code = case[0],
+                    .sample_rate = 44100,
+                    .channels = 1,
+                    .bits = case[1],
+                    .samples = &samples,
+                });
+
+                var w = std.Io.Writer.Allocating.init(allocator);
+                defer w.deinit();
+                try std.testing.expectError(case[2], wave.write(&w.writer, .{ .allocator = allocator }));
+            }
+        }
+
+        fn testWriteOnce(allocator: std.mem.Allocator) !void {
+            var samples = [_]T{ 0, 0.25, 0.5, 0.75 };
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 2,
+                .bits = 16,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            // std.Io.Writer.Allocating reports an allocation failure as WriteFailed
+            wave.write(&w.writer, .{
+                .allocator = allocator,
+                .use_fact = true,
+                .use_peak = true,
+            }) catch |err| return if (err == error.WriteFailed) error.OutOfMemory else err;
+        }
+
+        test "write does not leak when an allocation fails" {
+            try std.testing.checkAllAllocationFailures(std.testing.allocator, testWriteOnce, .{});
         }
 
         test "write 16bit_pcm.wav" {
