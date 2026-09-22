@@ -427,8 +427,10 @@ pub fn Wave(comptime T: type) type {
         }
 
         /// Builds the payload of the data chunk. The caller owns the returned slice.
-        fn dataPayload(self: Self, allocator: std.mem.Allocator) ![]u8 {
-            var payload = std.Io.Writer.Allocating.init(allocator);
+        fn dataPayload(self: Self, allocator: std.mem.Allocator, data_bytes: usize) ![]u8 {
+            // The exact size is already known, so allocate it once instead of letting the
+            // writer grow (and copy) as samples are encoded
+            var payload = try std.Io.Writer.Allocating.initCapacity(allocator, data_bytes);
             defer payload.deinit();
             const w = &payload.writer;
 
@@ -510,7 +512,7 @@ pub fn Wave(comptime T: type) type {
             if (options.use_peak)
                 try appendChunk(&chunk_list, options.allocator, "PEAK", try self.peakPayload(options.allocator, options.peak_timestamp));
 
-            try appendChunk(&chunk_list, options.allocator, "data", try self.dataPayload(options.allocator));
+            try appendChunk(&chunk_list, options.allocator, "data", try self.dataPayload(options.allocator, data_bytes));
             const wave_riff = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = try chunk_list.toOwnedSlice(options.allocator) } };
             defer wave_riff.deinit(options.allocator);
 
