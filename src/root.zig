@@ -75,6 +75,7 @@ pub fn Wave(comptime T: type) type {
             SizeOverflow,
             UnsupportedFormatCode,
             UnsupportedBits,
+            NonFiniteSample,
             WriteFailed,
         };
 
@@ -340,8 +341,9 @@ pub fn Wave(comptime T: type) type {
             switch (bits) {
                 8 => switch (format_code) {
                     .pcm => {
+                        if (!std.math.isFinite(s)) return error.NonFiniteSample;
                         // 8-bit PCM is unsigned, with 128 as the zero level (silence)
-                        const centered: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i8), -std.math.maxInt(i8), std.math.maxInt(i8) - 1));
+                        const centered: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i8), -std.math.maxInt(i8), std.math.maxInt(i8)));
                         const val: u8 = @intCast(centered + 128);
                         try w.writeInt(u8, val, .little);
                     },
@@ -349,21 +351,24 @@ pub fn Wave(comptime T: type) type {
                 },
                 16 => switch (format_code) {
                     .pcm => {
-                        const val: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16) - 1));
+                        if (!std.math.isFinite(s)) return error.NonFiniteSample;
+                        const val: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16)));
                         try w.writeInt(i16, val, .little);
                     },
                     else => unreachable, // rejected by checkSupported
                 },
                 24 => switch (format_code) {
                     .pcm => {
-                        const val: i24 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24) - 1));
+                        if (!std.math.isFinite(s)) return error.NonFiniteSample;
+                        const val: i24 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24)));
                         try w.writeInt(i24, val, .little);
                     },
                     else => unreachable, // rejected by checkSupported
                 },
                 32 => switch (format_code) {
                     .pcm => {
-                        const val: i32 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32) - 1));
+                        if (!std.math.isFinite(s)) return error.NonFiniteSample;
+                        const val: i32 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32)));
                         try w.writeInt(i32, val, .little);
                     },
                     .ieee_float => {
@@ -475,6 +480,14 @@ pub fn Wave(comptime T: type) type {
         /// writes a complete RIFF/WAVE file with appropriate chunks (fmt, data, and
         /// optionally fact and PEAK chunks).
         ///
+        /// PCM formats (8, 16, 24 and 32-bit) normalize a sample `s` in `-1.0..1.0` to the
+        /// full integer range symmetrically: `+1.0` and `-1.0` both round-trip exactly, at
+        /// the cost of the very bottom of the signed range (e.g. `i16`'s `minInt`) never
+        /// being produced by `write` (8-bit PCM is unsigned, with 128 as the zero level).
+        /// `NaN` and infinite samples are rejected rather than silently clamped. IEEE float
+        /// formats (32 and 64-bit) store the sample bits directly and are unaffected: `NaN`
+        /// and infinities round-trip as-is.
+        ///
         /// Parameters:
         ///   - self: The Wave(T) structure containing the audio data to write
         ///   - writer: Writer interface where the WAV file will be written
@@ -488,6 +501,7 @@ pub fn Wave(comptime T: type) type {
         ///   - SizeOverflow: A size (block align, byte rate, frame count or data size) does not fit its RIFF field
         ///   - UnsupportedFormatCode: Audio format not supported for writing
         ///   - UnsupportedBits: Bit depth not supported for writing
+        ///   - NonFiniteSample: A sample is NaN or infinite and the target format is PCM
         ///   - WriteFailed: The writer failed
         pub fn write(
             self: Self,
@@ -928,7 +942,7 @@ pub fn Wave(comptime T: type) type {
 
             // RIFF header (12) + fmt chunk (24) + data chunk header (8); the data chunk is then padded to an even length
             const data_offset = 44;
-            try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 65, 128, 191, 254 }, w.writer.buffered()[data_offset .. data_offset + samples.len]);
+            try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 65, 128, 191, 255 }, w.writer.buffered()[data_offset .. data_offset + samples.len]);
         }
 
         test "write then read round-trips every supported format" {
@@ -943,7 +957,7 @@ pub fn Wave(comptime T: type) type {
                 .{ .format_code = .ieee_float, .bits = 64, .tolerance = 0 },
             };
 
-            var samples = [_]T{ -0.5, 0, 0.25, 0.5, 0.75 };
+            var samples = [_]T{ -1, -0.5, 0, 0.25, 0.5, 0.75, 1 };
 
             for (cases) |case| {
                 const wave = Wave(T).init(.{
@@ -971,6 +985,55 @@ pub fn Wave(comptime T: type) type {
                     try std.testing.expectApproxEqAbs(expected, actual, case.tolerance);
                 }
             }
+        }
+
+        test "write rejects NaN and infinite samples for PCM formats" {
+            const allocator = std.testing.allocator;
+
+            const bits_cases = [_]u16{ 8, 16, 24, 32 };
+            const value_cases = [_]T{ std.math.nan(T), std.math.inf(T), -std.math.inf(T) };
+
+            for (bits_cases) |bits| {
+                for (value_cases) |v| {
+                    var samples = [_]T{v};
+                    const wave = Wave(T).init(.{
+                        .format_code = .pcm,
+                        .sample_rate = 44100,
+                        .channels = 1,
+                        .bits = bits,
+                        .samples = &samples,
+                    });
+
+                    var w = std.Io.Writer.Allocating.init(allocator);
+                    defer w.deinit();
+                    try std.testing.expectError(error.NonFiniteSample, wave.write(&w.writer, .{ .allocator = allocator }));
+                }
+            }
+        }
+
+        test "write preserves NaN and infinite samples for IEEE float formats" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{ std.math.nan(T), std.math.inf(T), -std.math.inf(T) };
+            const wave = Wave(T).init(.{
+                .format_code = .ieee_float,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 64,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try wave.write(&w.writer, .{ .allocator = allocator });
+
+            var reader = std.Io.Reader.fixed(w.writer.buffered());
+            const result = try Wave(T).read(allocator, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expect(std.math.isNan(result.samples[0]));
+            try std.testing.expectEqual(std.math.inf(T), result.samples[1]);
+            try std.testing.expectEqual(-std.math.inf(T), result.samples[2]);
         }
 
         fn testChunk(id: []const u8, data: []const u8) !riff.Chunk {
