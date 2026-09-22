@@ -254,8 +254,9 @@ pub fn Wave(comptime T: type) type {
             switch (bits) {
                 8 => switch (format_code) {
                     .pcm => {
-                        const val: u8 = data[i];
-                        return @as(T, @floatFromInt(val)) / std.math.maxInt(u8);
+                        // 8-bit PCM is unsigned, with 128 as the zero level (silence)
+                        const val: i16 = @as(i16, data[i]) - 128;
+                        return @as(T, @floatFromInt(val)) / std.math.maxInt(i8);
                     },
                     else => unreachable, // rejected by checkSupported
                 },
@@ -339,7 +340,9 @@ pub fn Wave(comptime T: type) type {
             switch (bits) {
                 8 => switch (format_code) {
                     .pcm => {
-                        const val: u8 = @intFromFloat(std.math.clamp(s * std.math.maxInt(u8), 0, std.math.maxInt(u8) - 1));
+                        // 8-bit PCM is unsigned, with 128 as the zero level (silence)
+                        const centered: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i8), -std.math.maxInt(i8), std.math.maxInt(i8) - 1));
+                        const val: u8 = @intCast(centered + 128);
                         try w.writeInt(u8, val, .little);
                     },
                     else => unreachable, // rejected by checkSupported
@@ -552,16 +555,16 @@ pub fn Wave(comptime T: type) type {
                 .format_code = .pcm,
                 .bits = 8,
                 .samples = &[_]T{
-                    0.498039215686274509803921568627451,
-                    0.52549019607843137254901960784313725,
-                    0.5490196078431372549019607843137255,
-                    0.57647058823529411764705882352941175,
-                    0.6,
-                    0.6235294117647058823529411764705882,
-                    0.6470588235294117647058823529411764,
-                    0.6705882352941176470588235294117647,
-                    0.6941176470588235294117647058823529,
-                    0.7137254901960784313725490196078431,
+                    -0.007874015748031496062992125984251968503937007,
+                    0.047244094488188976377952755905511811023622047,
+                    0.094488188976377952755905511811023622047244094,
+                    0.149606299212598425196850393700787401574803149,
+                    0.196850393700787401574803149606299212598425196,
+                    0.244094488188976377952755905511811023622047244,
+                    0.291338582677165354330708661417322834645669291,
+                    0.338582677165354330708661417322834645669291338,
+                    0.385826771653543307086614173228346456692913385,
+                    0.425196850393700787401574803149606299212598425,
                 },
                 .use_fact = false,
                 .use_peak = false,
@@ -907,10 +910,10 @@ pub fn Wave(comptime T: type) type {
             try std.testing.checkAllAllocationFailures(std.testing.allocator, testWriteOnce, .{});
         }
 
-        test "write clamps negative samples to zero for 8bit pcm" {
+        test "write encodes 8bit pcm as unsigned with 128 as silence" {
             const allocator = std.testing.allocator;
 
-            var samples = [_]T{ -1, -0.5, 0 };
+            var samples = [_]T{ -1, -0.5, 0, 0.5, 1 };
             const wave = Wave(T).init(.{
                 .format_code = .pcm,
                 .sample_rate = 44100,
@@ -925,14 +928,14 @@ pub fn Wave(comptime T: type) type {
 
             // RIFF header (12) + fmt chunk (24) + data chunk header (8); the data chunk is then padded to an even length
             const data_offset = 44;
-            try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 0, 0 }, w.writer.buffered()[data_offset .. data_offset + samples.len]);
+            try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 65, 128, 191, 254 }, w.writer.buffered()[data_offset .. data_offset + samples.len]);
         }
 
         test "write then read round-trips every supported format" {
             const allocator = std.testing.allocator;
 
             const cases = [_]struct { format_code: FormatCode, bits: u16, tolerance: T }{
-                .{ .format_code = .pcm, .bits = 8, .tolerance = 1.0 / 255.0 },
+                .{ .format_code = .pcm, .bits = 8, .tolerance = 1.0 / 127.0 },
                 .{ .format_code = .pcm, .bits = 16, .tolerance = 1.0 / 32767.0 },
                 .{ .format_code = .pcm, .bits = 24, .tolerance = 1.0 / 8388607.0 },
                 .{ .format_code = .pcm, .bits = 32, .tolerance = 1.0 / 2147483647.0 },
@@ -940,8 +943,7 @@ pub fn Wave(comptime T: type) type {
                 .{ .format_code = .ieee_float, .bits = 64, .tolerance = 0 },
             };
 
-            // Non-negative values, so that 8bit PCM (unsigned) is covered as well
-            var samples = [_]T{ 0, 0.25, 0.5, 0.75 };
+            var samples = [_]T{ -0.5, 0, 0.25, 0.5, 0.75 };
 
             for (cases) |case| {
                 const wave = Wave(T).init(.{
