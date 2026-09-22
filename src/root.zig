@@ -176,12 +176,8 @@ pub fn Wave(comptime T: type) type {
                     if (format_code != .pcm and format_code != .ieee_float)
                         return error.UnsupportedFormatCode;
 
-                    // We only support 8, 16, 24, 32 and 64 bits
-                    const supported_bits: []const u16 = &[_]u16{ 8, 16, 24, 32, 64 };
-                    for (supported_bits) |v| {
-                        if (v == bits)
-                            break;
-                    } else return error.UnsupportedBits;
+                    // We only support some combinations of bit depth and format code
+                    try checkSupported(bits, format_code);
 
                     // A file without channels or without a sample rate is not a usable WAV file
                     if (channels == 0 or sample_rate == 0)
@@ -209,7 +205,7 @@ pub fn Wave(comptime T: type) type {
                     errdefer allocator.free(samples_list);
 
                     for (0..samples_count) |i|
-                        samples_list[i] = try decodeSample(bits, format_code, data, i);
+                        samples_list[i] = decodeSample(bits, format_code, data, i);
 
                     samples = samples_list;
                     data_read = true;
@@ -228,15 +224,27 @@ pub fn Wave(comptime T: type) type {
             });
         }
 
+        /// Checks that (bits, format_code) is a combination that `read` and `write` support:
+        /// 8, 16 and 24 bits as PCM, 32 bits as PCM or IEEE float, and 64 bits as IEEE float.
+        /// `decodeSample` and `encodeSample` rely on this check.
+        fn checkSupported(bits: u16, format_code: FormatCode) error{ UnsupportedBits, UnsupportedFormatCode }!void {
+            switch (bits) {
+                8, 16, 24 => if (format_code != .pcm) return error.UnsupportedFormatCode,
+                32 => if (format_code != .pcm and format_code != .ieee_float) return error.UnsupportedFormatCode,
+                64 => if (format_code != .ieee_float) return error.UnsupportedFormatCode,
+                else => return error.UnsupportedBits,
+            }
+        }
+
         /// Decodes the `i`-th sample of a data chunk into a normalized value of type T
-        fn decodeSample(bits: u16, format_code: FormatCode, data: []const u8, i: usize) error{UnsupportedFormatCode}!T {
+        fn decodeSample(bits: u16, format_code: FormatCode, data: []const u8, i: usize) T {
             switch (bits) {
                 8 => switch (format_code) {
                     .pcm => {
                         const val: u8 = data[i];
                         return @as(T, @floatFromInt(val)) / std.math.maxInt(u8);
                     },
-                    else => return error.UnsupportedFormatCode,
+                    else => unreachable, // rejected by checkSupported
                 },
                 16 => switch (format_code) {
                     .pcm => {
@@ -244,7 +252,7 @@ pub fn Wave(comptime T: type) type {
                         const val: i16 = std.mem.readInt(i16, data[i * bytes_number ..][0..bytes_number], .little);
                         return @as(T, @floatFromInt(val)) / std.math.maxInt(i16);
                     },
-                    else => return error.UnsupportedFormatCode,
+                    else => unreachable, // rejected by checkSupported
                 },
                 24 => switch (format_code) {
                     .pcm => {
@@ -252,7 +260,7 @@ pub fn Wave(comptime T: type) type {
                         const val: i24 = std.mem.readInt(i24, data[i * bytes_number ..][0..bytes_number], .little);
                         return @as(T, @floatFromInt(val)) / std.math.maxInt(i24);
                     },
-                    else => return error.UnsupportedFormatCode,
+                    else => unreachable, // rejected by checkSupported
                 },
                 32 => switch (format_code) {
                     .pcm => {
@@ -265,7 +273,7 @@ pub fn Wave(comptime T: type) type {
                         const val: f32 = @bitCast(std.mem.readInt(u32, data[i * bytes_number ..][0..bytes_number], .little));
                         return @as(T, val);
                     },
-                    else => return error.UnsupportedFormatCode,
+                    else => unreachable, // rejected by checkSupported
                 },
                 64 => switch (format_code) {
                     .ieee_float => {
@@ -273,7 +281,7 @@ pub fn Wave(comptime T: type) type {
                         const val: f64 = @bitCast(std.mem.readInt(u64, data[i * bytes_number ..][0..bytes_number], .little));
                         return @as(T, val);
                     },
-                    else => return error.UnsupportedFormatCode,
+                    else => unreachable, // rejected by checkSupported
                 },
                 else => unreachable,
             }
@@ -321,21 +329,21 @@ pub fn Wave(comptime T: type) type {
                         const val: u8 = @intFromFloat(std.math.clamp(s * std.math.maxInt(u8), 0, std.math.maxInt(u8) - 1));
                         try w.writeInt(u8, val, .little);
                     },
-                    else => return error.UnsupportedFormatCode,
+                    else => unreachable, // rejected by checkSupported
                 },
                 16 => switch (format_code) {
                     .pcm => {
                         const val: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16) - 1));
                         try w.writeInt(i16, val, .little);
                     },
-                    else => return error.UnsupportedFormatCode,
+                    else => unreachable, // rejected by checkSupported
                 },
                 24 => switch (format_code) {
                     .pcm => {
                         const val: i24 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24) - 1));
                         try w.writeInt(i24, val, .little);
                     },
-                    else => return error.UnsupportedFormatCode,
+                    else => unreachable, // rejected by checkSupported
                 },
                 32 => switch (format_code) {
                     .pcm => {
@@ -346,16 +354,16 @@ pub fn Wave(comptime T: type) type {
                         const val: f32 = @floatCast(s);
                         try w.writeInt(u32, @bitCast(val), .little);
                     },
-                    else => return error.UnsupportedFormatCode,
+                    else => unreachable, // rejected by checkSupported
                 },
                 64 => switch (format_code) {
                     .ieee_float => {
                         const val: f64 = @floatCast(s);
                         try w.writeInt(u64, @bitCast(val), .little);
                     },
-                    else => return error.UnsupportedFormatCode,
+                    else => unreachable, // rejected by checkSupported
                 },
-                else => return error.UnsupportedBits,
+                else => unreachable, // rejected by checkSupported
             }
         }
 
@@ -404,12 +412,7 @@ pub fn Wave(comptime T: type) type {
                 return error.InvalidSampleCount;
 
             // Validate the format before writing anything, so that it is rejected even when there are no samples
-            switch (self.bits) {
-                8, 16, 24 => if (self.format_code != .pcm) return error.UnsupportedFormatCode,
-                32 => if (self.format_code != .pcm and self.format_code != .ieee_float) return error.UnsupportedFormatCode,
-                64 => if (self.format_code != .ieee_float) return error.UnsupportedFormatCode,
-                else => return error.UnsupportedBits,
-            }
+            try checkSupported(self.bits, self.format_code);
 
             var chunk_list: std.array_list.Aligned(riff.Chunk, null) = .empty;
             errdefer {
@@ -1206,6 +1209,31 @@ pub fn Wave(comptime T: type) type {
                 defer allocator.free(bytes);
                 var reader = std.Io.Reader.fixed(bytes);
                 try std.testing.expectError(error.UnsupportedFormatCode, Wave(T).read(allocator, &reader));
+            }
+        }
+
+        test "read rejects unsupported combinations of bits and format code in the fmt chunk" {
+            const allocator = std.testing.allocator;
+
+            const Case = struct { format_code: u16, bits: u16, expected: anyerror };
+            const cases = [_]Case{
+                .{ .format_code = 1, .bits = 64, .expected = error.UnsupportedFormatCode }, // 64bit PCM
+                .{ .format_code = 3, .bits = 16, .expected = error.UnsupportedFormatCode }, // 16bit IEEE float
+                .{ .format_code = 1, .bits = 12, .expected = error.UnsupportedBits },
+            };
+
+            for (cases) |c| {
+                var fmt_payload = test_fmt_payload;
+                std.mem.writeInt(u16, fmt_payload[0..2], c.format_code, .little);
+                std.mem.writeInt(u16, fmt_payload[14..16], c.bits, .little);
+
+                // Without a data chunk, so that the error can only come from the fmt chunk
+                const chunks = [_]riff.Chunk{try testChunk("fmt ", &fmt_payload)};
+                const bytes = try testBuildWave(allocator, &chunks);
+                defer allocator.free(bytes);
+
+                var reader = std.Io.Reader.fixed(bytes);
+                try std.testing.expectError(c.expected, Wave(T).read(allocator, &reader));
             }
         }
 
