@@ -37,6 +37,10 @@ pub fn Wave(comptime T: type) type {
     if (@typeInfo(T) != .float)
         @compileError("Wave(T) requires a floating point type, found " ++ @typeName(T));
 
+    // The decoder and the encoder normalize with 32-bit integer constants (`maxInt(i32)`), which f16 and f32 cannot represent
+    if (@typeInfo(T).float.bits < 64)
+        @compileError("Wave(T) requires a floating point type with at least 64 bits (f64, f80 or f128), found " ++ @typeName(T));
+
     return struct {
         const Self = @This();
 
