@@ -367,6 +367,77 @@ pub fn Wave(comptime T: type) type {
             }
         }
 
+        /// Builds the payload of the fmt chunk. The caller owns the returned slice.
+        fn fmtPayload(self: Self, allocator: std.mem.Allocator, block_align: u16, bytes_per_sec: u32) ![]u8 {
+            var payload = std.Io.Writer.Allocating.init(allocator);
+            defer payload.deinit();
+            const w = &payload.writer;
+
+            try w.writeInt(u16, @intFromEnum(self.format_code), .little);
+            try w.writeInt(u16, self.channels, .little);
+            try w.writeInt(u32, self.sample_rate, .little);
+            try w.writeInt(u32, bytes_per_sec, .little);
+            try w.writeInt(u16, block_align, .little);
+            try w.writeInt(u16, self.bits, .little);
+
+            return payload.toOwnedSlice();
+        }
+
+        /// Builds the payload of the fact chunk. The caller owns the returned slice.
+        fn factPayload(allocator: std.mem.Allocator, frame_count: u32) ![]u8 {
+            var payload = std.Io.Writer.Allocating.init(allocator);
+            defer payload.deinit();
+            const w = &payload.writer;
+
+            try w.writeInt(u32, frame_count, .little);
+
+            return payload.toOwnedSlice();
+        }
+
+        /// Builds the payload of the PEAK chunk. The caller owns the returned slice.
+        fn peakPayload(self: Self, allocator: std.mem.Allocator, timestamp: u32) ![]u8 {
+            var payload = std.Io.Writer.Allocating.init(allocator);
+            defer payload.deinit();
+            const w = &payload.writer;
+
+            // Version (usually 1)
+            try w.writeInt(u32, 1, .little);
+            // Timestamp (Unix time or 0)
+            try w.writeInt(u32, timestamp, .little);
+
+            // Calculate peak for each channel
+            for (0..self.channels) |ch| {
+                var max_val: f32 = 0;
+                var max_pos: u32 = 0;
+
+                var i: usize = ch;
+                while (i < self.samples.len) : (i += self.channels) {
+                    const abs_val = @abs(@as(f32, @floatCast(self.samples[i])));
+                    if (abs_val > max_val) {
+                        max_val = abs_val;
+                        max_pos = @intCast(i / self.channels);
+                    }
+                }
+
+                try w.writeAll(std.mem.asBytes(&max_val));
+                try w.writeInt(u32, max_pos, .little);
+            }
+
+            return payload.toOwnedSlice();
+        }
+
+        /// Builds the payload of the data chunk. The caller owns the returned slice.
+        fn dataPayload(self: Self, allocator: std.mem.Allocator) ![]u8 {
+            var payload = std.Io.Writer.Allocating.init(allocator);
+            defer payload.deinit();
+            const w = &payload.writer;
+
+            for (self.samples) |s|
+                try encodeSample(self.bits, self.format_code, s, w);
+
+            return payload.toOwnedSlice();
+        }
+
         /// Options for writing WAV files
         pub const WriteOptions = struct {
             /// Memory allocator for temporary buffers during writing
@@ -431,76 +502,15 @@ pub fn Wave(comptime T: type) type {
                 return error.SizeOverflow;
             const frame_count = std.math.cast(u32, self.samples.len / self.channels) orelse return error.SizeOverflow;
 
-            // Wave fmt chunk
-            {
-                var fmt_payload = std.Io.Writer.Allocating.init(options.allocator);
-                defer fmt_payload.deinit();
-                const fw = &fmt_payload.writer;
+            try appendChunk(&chunk_list, options.allocator, "fmt ", try self.fmtPayload(options.allocator, block_align, bytes_per_sec));
 
-                try fw.writeInt(u16, @intFromEnum(self.format_code), .little);
-                try fw.writeInt(u16, self.channels, .little);
-                try fw.writeInt(u32, self.sample_rate, .little);
-                try fw.writeInt(u32, bytes_per_sec, .little);
-                try fw.writeInt(u16, block_align, .little);
-                try fw.writeInt(u16, bits_per_sample, .little);
+            if (options.use_fact)
+                try appendChunk(&chunk_list, options.allocator, "fact", try factPayload(options.allocator, frame_count));
 
-                try appendChunk(&chunk_list, options.allocator, "fmt ", try fmt_payload.toOwnedSlice());
-            }
+            if (options.use_peak)
+                try appendChunk(&chunk_list, options.allocator, "PEAK", try self.peakPayload(options.allocator, options.peak_timestamp));
 
-            // Wave fact chunk
-            if (options.use_fact) {
-                var fact_payload = std.Io.Writer.Allocating.init(options.allocator);
-                defer fact_payload.deinit();
-                const fw = &fact_payload.writer;
-
-                try fw.writeInt(u32, frame_count, .little);
-                try appendChunk(&chunk_list, options.allocator, "fact", try fact_payload.toOwnedSlice());
-            }
-
-            // Wave PEAK chunk
-            if (options.use_peak) {
-                var peak_payload = std.Io.Writer.Allocating.init(options.allocator);
-                defer peak_payload.deinit();
-                const pw = &peak_payload.writer;
-
-                // Version (usually 1)
-                try pw.writeInt(u32, 1, .little);
-                // Timestamp (Unix time or 0)
-                try pw.writeInt(u32, options.peak_timestamp, .little);
-
-                // Calculate peak for each channel
-                for (0..self.channels) |ch| {
-                    var max_val: f32 = 0;
-                    var max_pos: u32 = 0;
-
-                    var i: usize = ch;
-                    while (i < self.samples.len) : (i += self.channels) {
-                        const abs_val = @abs(@as(f32, @floatCast(self.samples[i])));
-                        if (abs_val > max_val) {
-                            max_val = abs_val;
-                            max_pos = @intCast(i / self.channels);
-                        }
-                    }
-
-                    try pw.writeAll(std.mem.asBytes(&max_val));
-                    try pw.writeInt(u32, max_pos, .little);
-                }
-
-                try appendChunk(&chunk_list, options.allocator, "PEAK", try peak_payload.toOwnedSlice());
-            }
-
-            // Wave data chunk
-            {
-                var data_payload = std.Io.Writer.Allocating.init(options.allocator);
-                defer data_payload.deinit();
-                const dw = &data_payload.writer;
-
-                for (self.samples) |s|
-                    try encodeSample(self.bits, self.format_code, s, dw);
-
-                try appendChunk(&chunk_list, options.allocator, "data", try data_payload.toOwnedSlice());
-            }
-
+            try appendChunk(&chunk_list, options.allocator, "data", try self.dataPayload(options.allocator));
             const wave_riff = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = try chunk_list.toOwnedSlice(options.allocator) } };
             defer wave_riff.deinit(options.allocator);
 
