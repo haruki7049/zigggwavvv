@@ -131,7 +131,7 @@ pub fn Wave(comptime T: type) type {
         ///   - EndOfStream: The reader ended before the whole file was read
         ///   - UnsupportedFormatCode: Audio format not supported
         ///   - UnsupportedBits: Bit depth not supported
-        pub fn read(allocator: std.mem.Allocator, reader: anytype) ReadError!Self {
+        pub fn read(allocator: std.mem.Allocator, reader: *std.Io.Reader) ReadError!Self {
             const root_chunk = riff.read(allocator, reader) catch |err| return switch (err) {
                 error.OutOfMemory => error.OutOfMemory,
                 error.SizeMismatch => error.SizeMismatch,
@@ -505,7 +505,7 @@ pub fn Wave(comptime T: type) type {
         ///   - WriteFailed: The writer failed
         pub fn write(
             self: Self,
-            writer: anytype,
+            writer: *std.Io.Writer,
             options: WriteOptions,
         ) WriteError!void {
             if (self.channels == 0)
@@ -1375,27 +1375,9 @@ pub fn Wave(comptime T: type) type {
             }
         }
 
-        // The tests below pin down how `read` behaves with different `reader` types.
-        // `read` only relies on `reader.buffered()` (through riff_zig), so it sees
-        // the bytes already in the reader's buffer and never fills the reader itself.
-
-        test "read accepts any type with a buffered() method" {
-            const allocator = std.testing.allocator;
-
-            const BufferedOnly = struct {
-                bytes: []const u8,
-
-                pub fn buffered(self: @This()) []const u8 {
-                    return self.bytes;
-                }
-            };
-
-            const wavedata = @embedFile("./assets/16bit_pcm.wav");
-            const result = try Wave(T).read(allocator, BufferedOnly{ .bytes = wavedata });
-            defer result.deinit(allocator);
-
-            try std.testing.expectEqual(16, result.bits);
-        }
+        // The test below pins down how `read` behaves with a `*std.Io.Reader`: it only
+        // relies on `reader.buffered()` (through riff_zig), so it sees the bytes already
+        // in the reader's buffer and never fills the reader itself.
 
         test "read fails on an empty reader" {
             const allocator = std.testing.allocator;
