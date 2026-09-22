@@ -171,6 +171,10 @@ pub fn Wave(comptime T: type) type {
                         if (v == bits)
                             break;
                     } else return error.UnsupportedBits;
+
+                    // A file without channels or without a sample rate is not a usable WAV file
+                    if (channels == 0 or sample_rate == 0)
+                        return error.InvalidFormat;
                 } else if (std.mem.eql(u8, &id, "data")) {
                     const data = chunk.data;
 
@@ -984,6 +988,31 @@ pub fn Wave(comptime T: type) type {
 
             var reader = std.Io.Reader.fixed(bytes);
             try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+        }
+
+        test "read fails with zero channels or a zero sample rate" {
+            const allocator = std.testing.allocator;
+
+            const Patch = struct { offset: usize, len: usize };
+            const patches = [_]Patch{
+                .{ .offset = 2, .len = 2 }, // channels
+                .{ .offset = 4, .len = 4 }, // sample_rate
+            };
+
+            for (patches) |p| {
+                var fmt_payload = test_fmt_payload;
+                @memset(fmt_payload[p.offset .. p.offset + p.len], 0);
+
+                const chunks = [_]riff.Chunk{
+                    try testChunk("fmt ", &fmt_payload),
+                    try testChunk("data", &test_data_payload),
+                };
+                const bytes = try testBuildWave(allocator, &chunks);
+                defer allocator.free(bytes);
+
+                var reader = std.Io.Reader.fixed(bytes);
+                try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+            }
         }
 
         // The tests below pin down how `read` behaves with different `reader` types.
