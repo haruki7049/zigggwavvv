@@ -109,6 +109,12 @@ pub fn Wave(comptime T: type) type {
         ///
         /// The sample data type is the type parameter T of `Wave(T)` (e.g., f64, f80, f128).
         ///
+        /// The data chunk must hold a whole number of frames (one sample per channel); a
+        /// short trailing frame is rejected as `InvalidFormat` rather than dropped. The fmt
+        /// chunk's `block_align` and `byte_rate` fields are not validated against `channels`
+        /// and `bits`: they are not used to decode the data chunk, and some encoders get them
+        /// wrong, so a mismatch there does not by itself make a file unreadable.
+        ///
         /// Parameters:
         ///   - allocator: Memory allocator for sample data
         ///   - reader: Reader interface providing the WAV file data
@@ -193,14 +199,21 @@ pub fn Wave(comptime T: type) type {
                     if (data_read)
                         return error.InvalidFormat;
 
-                    const samples_count = switch (bits) {
-                        8 => data.len, // 8bit
-                        16 => data.len / 2, // 16bit
-                        24 => data.len / 3, // 24bit
-                        32 => data.len / 4, // 32bit
-                        64 => data.len / 8, // 64bit
+                    const bytes_per_sample: usize = switch (bits) {
+                        8 => 1,
+                        16 => 2,
+                        24 => 3,
+                        32 => 4,
+                        64 => 8,
                         else => unreachable,
                     };
+
+                    // channels was already checked to be non-zero when the fmt chunk was read.
+                    // A data chunk that does not hold a whole number of frames is truncated or corrupt.
+                    if (data.len % (bytes_per_sample * channels) != 0)
+                        return error.InvalidFormat;
+
+                    const samples_count = data.len / bytes_per_sample;
                     var samples_list: []T = try allocator.alloc(T, samples_count);
                     errdefer allocator.free(samples_list);
 
@@ -1092,6 +1105,54 @@ pub fn Wave(comptime T: type) type {
 
                 var reader = std.Io.Reader.fixed(bytes);
                 try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+            }
+        }
+
+        test "read fails when the data chunk does not hold a whole number of frames" {
+            const allocator = std.testing.allocator;
+
+            // 2 channels, 16 bits => 4 bytes per frame; 6 bytes of data is 1.5 frames
+            var fmt_payload = test_fmt_payload;
+            std.mem.writeInt(u16, fmt_payload[2..4], 2, .little);
+            const data_payload = [_]u8{ 0, 0, 0xFF, 0x7F, 0, 0 };
+
+            const chunks = [_]riff.Chunk{
+                try testChunk("fmt ", &fmt_payload),
+                try testChunk("data", &data_payload),
+            };
+            const bytes = try testBuildWave(allocator, &chunks);
+            defer allocator.free(bytes);
+
+            var reader = std.Io.Reader.fixed(bytes);
+            try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+        }
+
+        test "read tolerates a fmt chunk whose block_align or byte_rate do not match channels and bits" {
+            const allocator = std.testing.allocator;
+
+            const Patch = struct { offset: usize, len: usize };
+            const patches = [_]Patch{
+                .{ .offset = 8, .len = 4 }, // byte_rate
+                .{ .offset = 12, .len = 2 }, // block_align
+            };
+
+            for (patches) |p| {
+                var fmt_payload = test_fmt_payload;
+                @memset(fmt_payload[p.offset .. p.offset + p.len], 0xFF);
+
+                const chunks = [_]riff.Chunk{
+                    try testChunk("fmt ", &fmt_payload),
+                    try testChunk("data", &test_data_payload),
+                };
+                const bytes = try testBuildWave(allocator, &chunks);
+                defer allocator.free(bytes);
+
+                var reader = std.Io.Reader.fixed(bytes);
+                const result = try Wave(T).read(allocator, &reader);
+                defer result.deinit(allocator);
+
+                try std.testing.expectEqual(1, result.channels);
+                try std.testing.expectEqual(16, result.bits);
             }
         }
 
