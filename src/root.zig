@@ -103,7 +103,9 @@ pub fn Wave(comptime T: type) type {
         ///
         /// This function parses the RIFF/WAVE file format and extracts audio data,
         /// converting samples to normalized values of the specified type T. Supports PCM
-        /// and IEEE float formats with 8, 16, 24, 32, and 64-bit sample depths.
+        /// and IEEE float formats with 8, 16, 24, 32, and 64-bit sample depths. A
+        /// WAVE_FORMAT_EXTENSIBLE fmt chunk is accepted when its sub-format is PCM or IEEE
+        /// float; `format_code` of the result is then that sub-format.
         ///
         /// The sample data type is the type parameter T of `Wave(T)` (e.g., f64, f80, f128).
         ///
@@ -160,7 +162,11 @@ pub fn Wave(comptime T: type) type {
                     if (data.len < 16)
                         return error.InvalidFormat;
 
-                    format_code = @enumFromInt(std.mem.readInt(u16, data[0..2], .little));
+                    const tag = std.mem.readInt(u16, data[0..2], .little);
+                    format_code = if (tag == wave_format_extensible)
+                        try extensibleFormatCode(data)
+                    else
+                        @enumFromInt(tag);
                     channels = std.mem.readInt(u16, data[2..4], .little);
                     sample_rate = std.mem.readInt(u32, data[4..8], .little);
                     bits = std.mem.readInt(u16, data[14..16], .little);
@@ -271,6 +277,29 @@ pub fn Wave(comptime T: type) type {
                 },
                 else => unreachable,
             }
+        }
+
+        /// The format tag of a WAVE_FORMAT_EXTENSIBLE fmt chunk, whose real format is stored in a sub-format GUID
+        const wave_format_extensible: u16 = 0xFFFE;
+
+        /// The last 14 bytes of the sub-format GUIDs that wrap a plain format code (the first 2 bytes are the format code)
+        const sub_format_guid_suffix = [_]u8{ 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71 };
+
+        /// Reads the format code out of a WAVE_FORMAT_EXTENSIBLE fmt chunk.
+        /// Only sub-formats that wrap a plain format code (such as PCM or IEEE float) are understood.
+        fn extensibleFormatCode(data: []const u8) error{ InvalidFormat, UnsupportedFormatCode }!FormatCode {
+            // 16 bytes of WAVEFORMATEX, cbSize (2), valid bits (2), channel mask (4) and the sub-format GUID (16)
+            if (data.len < 40)
+                return error.InvalidFormat;
+
+            const cb_size = std.mem.readInt(u16, data[16..18], .little);
+            if (cb_size < 22)
+                return error.InvalidFormat;
+
+            if (!std.mem.eql(u8, data[26..40], &sub_format_guid_suffix))
+                return error.UnsupportedFormatCode;
+
+            return @enumFromInt(std.mem.readInt(u16, data[24..26], .little));
         }
 
         /// Appends a chunk that takes ownership of `data`, freeing it if appending fails
@@ -1048,6 +1077,135 @@ pub fn Wave(comptime T: type) type {
 
                 var reader = std.Io.Reader.fixed(bytes);
                 try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+            }
+        }
+
+        /// A 40 byte WAVE_FORMAT_EXTENSIBLE fmt chunk for mono 44100Hz with the given bits and sub-format code
+        fn extensibleFmtPayload(bits: u16, sub_format: u16) [40]u8 {
+            var p: [40]u8 = @splat(0);
+            std.mem.writeInt(u16, p[0..2], 0xFFFE, .little);
+            std.mem.writeInt(u16, p[2..4], 1, .little);
+            std.mem.writeInt(u32, p[4..8], 44100, .little);
+            std.mem.writeInt(u32, p[8..12], @as(u32, 44100) * (bits / 8), .little);
+            std.mem.writeInt(u16, p[12..14], bits / 8, .little);
+            std.mem.writeInt(u16, p[14..16], bits, .little);
+            std.mem.writeInt(u16, p[16..18], 22, .little); // cbSize
+            std.mem.writeInt(u16, p[18..20], bits, .little); // valid bits
+            std.mem.writeInt(u32, p[20..24], 4, .little); // channel mask (front center)
+            std.mem.writeInt(u16, p[24..26], sub_format, .little);
+            @memcpy(p[26..40], &[_]u8{ 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71 });
+            return p;
+        }
+
+        test "read accepts a WAVE_FORMAT_EXTENSIBLE fmt chunk with a PCM sub-format" {
+            const allocator = std.testing.allocator;
+
+            const fmt_payload = extensibleFmtPayload(16, 1);
+            const chunks = [_]riff.Chunk{
+                try testChunk("fmt ", &fmt_payload),
+                try testChunk("data", &test_data_payload),
+            };
+            const bytes = try testBuildWave(allocator, &chunks);
+            defer allocator.free(bytes);
+
+            var reader = std.Io.Reader.fixed(bytes);
+            const result = try Wave(T).read(allocator, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(.pcm, result.format_code);
+            try std.testing.expectEqual(44100, result.sample_rate);
+            try std.testing.expectEqual(1, result.channels);
+            try std.testing.expectEqual(16, result.bits);
+
+            // The samples are the same as the ones of the plain PCM fmt chunk
+            const plain_chunks = [_]riff.Chunk{
+                try testChunk("fmt ", &test_fmt_payload),
+                try testChunk("data", &test_data_payload),
+            };
+            const plain_bytes = try testBuildWave(allocator, &plain_chunks);
+            defer allocator.free(plain_bytes);
+            var plain_reader = std.Io.Reader.fixed(plain_bytes);
+            const plain = try Wave(T).read(allocator, &plain_reader);
+            defer plain.deinit(allocator);
+            try std.testing.expectEqualSlices(T, plain.samples, result.samples);
+        }
+
+        test "read accepts a WAVE_FORMAT_EXTENSIBLE fmt chunk with an IEEE float sub-format" {
+            const allocator = std.testing.allocator;
+
+            const fmt_payload = extensibleFmtPayload(32, 3);
+            const float_data = std.mem.toBytes(@as(f32, 0.5));
+            const chunks = [_]riff.Chunk{
+                try testChunk("fmt ", &fmt_payload),
+                try testChunk("data", &float_data),
+            };
+            const bytes = try testBuildWave(allocator, &chunks);
+            defer allocator.free(bytes);
+
+            var reader = std.Io.Reader.fixed(bytes);
+            const result = try Wave(T).read(allocator, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(.ieee_float, result.format_code);
+            try std.testing.expectEqual(32, result.bits);
+            try std.testing.expectEqualSlices(T, &[_]T{0.5}, result.samples);
+        }
+
+        test "read rejects invalid WAVE_FORMAT_EXTENSIBLE fmt chunks" {
+            const allocator = std.testing.allocator;
+
+            // Too short to hold the extension
+            {
+                const fmt_payload = extensibleFmtPayload(16, 1);
+                const chunks = [_]riff.Chunk{
+                    try testChunk("fmt ", fmt_payload[0..24]),
+                    try testChunk("data", &test_data_payload),
+                };
+                const bytes = try testBuildWave(allocator, &chunks);
+                defer allocator.free(bytes);
+                var reader = std.Io.Reader.fixed(bytes);
+                try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+            }
+
+            // cbSize is smaller than the extension
+            {
+                var fmt_payload = extensibleFmtPayload(16, 1);
+                std.mem.writeInt(u16, fmt_payload[16..18], 0, .little);
+                const chunks = [_]riff.Chunk{
+                    try testChunk("fmt ", &fmt_payload),
+                    try testChunk("data", &test_data_payload),
+                };
+                const bytes = try testBuildWave(allocator, &chunks);
+                defer allocator.free(bytes);
+                var reader = std.Io.Reader.fixed(bytes);
+                try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+            }
+
+            // The GUID is not a wrapped format code
+            {
+                var fmt_payload = extensibleFmtPayload(16, 1);
+                fmt_payload[30] = 0xFF;
+                const chunks = [_]riff.Chunk{
+                    try testChunk("fmt ", &fmt_payload),
+                    try testChunk("data", &test_data_payload),
+                };
+                const bytes = try testBuildWave(allocator, &chunks);
+                defer allocator.free(bytes);
+                var reader = std.Io.Reader.fixed(bytes);
+                try std.testing.expectError(error.UnsupportedFormatCode, Wave(T).read(allocator, &reader));
+            }
+
+            // A sub-format that is not supported
+            {
+                const fmt_payload = extensibleFmtPayload(16, 2);
+                const chunks = [_]riff.Chunk{
+                    try testChunk("fmt ", &fmt_payload),
+                    try testChunk("data", &test_data_payload),
+                };
+                const bytes = try testBuildWave(allocator, &chunks);
+                defer allocator.free(bytes);
+                var reader = std.Io.Reader.fixed(bytes);
+                try std.testing.expectError(error.UnsupportedFormatCode, Wave(T).read(allocator, &reader));
             }
         }
 
