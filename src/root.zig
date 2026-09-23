@@ -129,19 +129,26 @@ pub fn Wave(comptime T: type) type {
         ///   - ReadFailed: The reader failed
         ///   - UnsupportedFormatCode: Audio format not supported
         ///   - UnsupportedBits: Bit depth not supported
-        pub fn read(allocator: std.mem.Allocator, reader: *std.Io.Reader) ReadError!Self {
-            const root_chunk = riff.read(allocator, reader) catch |err| return switch (err) {
-                error.OutOfMemory => error.OutOfMemory,
+        fn mapStreamError(err: riff.stream.Error) ReadError {
+            return switch (err) {
                 error.SizeMismatch => error.SizeMismatch,
                 error.ReadFailed => error.ReadFailed,
                 else => error.InvalidFormat,
             };
-            defer root_chunk.deinit(allocator);
+        }
 
-            const r = switch (root_chunk) {
-                .riff => |r| if (std.mem.eql(u8, &r.four_cc.inner, "WAVE")) r else return error.InvalidFormat,
+        pub fn read(allocator: std.mem.Allocator, reader: *std.Io.Reader) ReadError!Self {
+            var it = riff.stream.Iterator.init(reader, .{});
+
+            // The root container must be a RIFF WAVE
+            const top_event = (it.next() catch |err| return mapStreamError(err)) orelse return error.InvalidFormat;
+            switch (top_event) {
+                .begin_container => |c| {
+                    if (c.kind != .riff or !std.mem.eql(u8, &c.four_cc.inner, "WAVE"))
+                        return error.InvalidFormat;
+                },
                 else => return error.InvalidFormat,
-            };
+            }
 
             var format_code: FormatCode = undefined;
             var sample_rate: u32 = undefined;
@@ -152,74 +159,102 @@ pub fn Wave(comptime T: type) type {
             var data_read = false;
             errdefer if (data_read) allocator.free(samples);
 
-            for (r.chunks) |c| {
-                // Skip chunks that are not plain chunks, such as LIST
-                const chunk = switch (c) {
-                    .chunk => |chunk| chunk,
-                    else => continue,
-                };
-                const id = chunk.four_cc.inner;
+            while (it.next() catch |err| return mapStreamError(err)) |ev| {
+                switch (ev) {
+                    .chunk => |c| {
+                        // Only consider chunks at depth 1 (direct children of RIFF WAVE)
+                        if (it.depth != 1) continue;
 
-                if (std.mem.eql(u8, &id, "fmt ")) {
-                    const data = chunk.data;
+                        const id = c.four_cc.inner;
+                        if (std.mem.eql(u8, &id, "fmt ")) {
+                            if (c.size < 16)
+                                return error.InvalidFormat;
 
-                    if (data.len < 16)
-                        return error.InvalidFormat;
+                            const fmt_data = it.readDataAlloc(allocator) catch |err| return switch (err) {
+                                error.OutOfMemory => error.OutOfMemory,
+                                error.ReadFailed => error.ReadFailed,
+                                else => error.InvalidFormat,
+                            };
+                            defer allocator.free(fmt_data);
 
-                    const tag = std.mem.readInt(u16, data[0..2], .little);
-                    format_code = if (tag == wave_format_extensible)
-                        try extensibleFormatCode(data)
-                    else
-                        @enumFromInt(tag);
-                    channels = std.mem.readInt(u16, data[2..4], .little);
-                    sample_rate = std.mem.readInt(u32, data[4..8], .little);
-                    bits = std.mem.readInt(u16, data[14..16], .little);
-                    fmt_read = true;
+                            const tag = std.mem.readInt(u16, fmt_data[0..2], .little);
+                            format_code = if (tag == wave_format_extensible)
+                                try extensibleFormatCode(fmt_data)
+                            else
+                                @enumFromInt(tag);
+                            channels = std.mem.readInt(u16, fmt_data[2..4], .little);
+                            sample_rate = std.mem.readInt(u32, fmt_data[4..8], .little);
+                            bits = std.mem.readInt(u16, fmt_data[14..16], .little);
+                            fmt_read = true;
 
-                    // We only support PCM and IEEE Float
-                    if (format_code != .pcm and format_code != .ieee_float)
-                        return error.UnsupportedFormatCode;
+                            // We only support PCM and IEEE Float
+                            if (format_code != .pcm and format_code != .ieee_float)
+                                return error.UnsupportedFormatCode;
 
-                    // We only support some combinations of bit depth and format code
-                    try checkSupported(bits, format_code);
+                            // We only support some combinations of bit depth and format code
+                            try checkSupported(bits, format_code);
 
-                    // A file without channels or without a sample rate is not a usable WAV file
-                    if (channels == 0 or sample_rate == 0)
-                        return error.InvalidFormat;
-                } else if (std.mem.eql(u8, &id, "data")) {
-                    const data = chunk.data;
+                            // A file without channels or without a sample rate is not a usable WAV file
+                            if (channels == 0 or sample_rate == 0)
+                                return error.InvalidFormat;
+                        } else if (std.mem.eql(u8, &id, "data")) {
+                            // The fmt chunk must precede the data chunk
+                            if (!fmt_read)
+                                return error.InvalidFormat;
 
-                    // The fmt chunk must precede the data chunk
-                    if (!fmt_read)
-                        return error.InvalidFormat;
+                            // A WAV file has exactly one data chunk
+                            if (data_read)
+                                return error.InvalidFormat;
 
-                    // A WAV file has exactly one data chunk
-                    if (data_read)
-                        return error.InvalidFormat;
+                            const bytes_per_sample: usize = switch (bits) {
+                                8 => 1,
+                                16 => 2,
+                                24 => 3,
+                                32 => 4,
+                                64 => 8,
+                                else => unreachable,
+                            };
 
-                    const bytes_per_sample: usize = switch (bits) {
-                        8 => 1,
-                        16 => 2,
-                        24 => 3,
-                        32 => 4,
-                        64 => 8,
-                        else => unreachable,
-                    };
+                            const frame_size = bytes_per_sample * channels;
+                            if (c.size % frame_size != 0)
+                                return error.InvalidFormat;
 
-                    // channels was already checked to be non-zero when the fmt chunk was read.
-                    // A data chunk that does not hold a whole number of frames is truncated or corrupt.
-                    if (data.len % (bytes_per_sample * channels) != 0)
-                        return error.InvalidFormat;
+                            const samples_count = c.size / bytes_per_sample;
+                            var samples_list: []T = try allocator.alloc(T, samples_count);
+                            errdefer allocator.free(samples_list);
 
-                    const samples_count = data.len / bytes_per_sample;
-                    var samples_list: []T = try allocator.alloc(T, samples_count);
-                    errdefer allocator.free(samples_list);
+                            if (samples_count > 0) {
+                                var sub_buf: [1024]u8 = undefined;
+                                const data_reader = it.dataReader(&sub_buf) catch |err| return switch (err) {
+                                    error.SizeMismatch => error.SizeMismatch,
+                                    error.ReadFailed => error.ReadFailed,
+                                    else => error.InvalidFormat,
+                                };
 
-                    for (0..samples_count) |i|
-                        samples_list[i] = decodeSample(bits, format_code, data, i);
+                                var block_buf: [4096]u8 = undefined;
+                                const block_samples = block_buf.len / bytes_per_sample;
 
-                    samples = samples_list;
-                    data_read = true;
+                                var samples_decoded: usize = 0;
+                                while (samples_decoded < samples_count) {
+                                    const samples_to_read = @min(block_samples, samples_count - samples_decoded);
+                                    const bytes_to_read = samples_to_read * bytes_per_sample;
+                                    const chunk_bytes = block_buf[0..bytes_to_read];
+                                    data_reader.readSliceAll(chunk_bytes) catch |err| return switch (err) {
+                                        error.EndOfStream => error.SizeMismatch,
+                                        error.ReadFailed => error.ReadFailed,
+                                    };
+                                    for (0..samples_to_read) |i| {
+                                        samples_list[samples_decoded + i] = decodeSample(bits, format_code, chunk_bytes, i);
+                                    }
+                                    samples_decoded += samples_to_read;
+                                }
+                            }
+
+                            samples = samples_list;
+                            data_read = true;
+                        }
+                    },
+                    .begin_container, .end_container => {},
                 }
             }
 
