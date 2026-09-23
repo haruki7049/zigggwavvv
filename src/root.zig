@@ -61,7 +61,6 @@ pub fn Wave(comptime T: type) type {
             InvalidFormat,
             SizeMismatch,
             ReadFailed,
-            EndOfStream,
             UnsupportedFormatCode,
             UnsupportedBits,
         };
@@ -128,7 +127,6 @@ pub fn Wave(comptime T: type) type {
         ///   - InvalidFormat: Not a valid WAVE file
         ///   - SizeMismatch: A chunk size does not match the file size
         ///   - ReadFailed: The reader failed
-        ///   - EndOfStream: The reader ended before the whole file was read
         ///   - UnsupportedFormatCode: Audio format not supported
         ///   - UnsupportedBits: Bit depth not supported
         pub fn read(allocator: std.mem.Allocator, reader: *std.Io.Reader) ReadError!Self {
@@ -136,7 +134,6 @@ pub fn Wave(comptime T: type) type {
                 error.OutOfMemory => error.OutOfMemory,
                 error.SizeMismatch => error.SizeMismatch,
                 error.ReadFailed => error.ReadFailed,
-                error.EndOfStream => error.EndOfStream,
                 else => error.InvalidFormat,
             };
             defer root_chunk.deinit(allocator);
@@ -546,10 +543,7 @@ pub fn Wave(comptime T: type) type {
             const wave_riff = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = try chunk_list.toOwnedSlice(options.allocator) } };
             defer wave_riff.deinit(options.allocator);
 
-            riff.write(wave_riff, options.allocator, writer) catch |err| return switch (err) {
-                error.OutOfMemory => error.OutOfMemory,
-                else => error.WriteFailed,
-            };
+            riff.write(wave_riff, writer) catch return error.WriteFailed;
         }
 
         /// A WAV asset together with the values `read` must return and the options `write` must use to reproduce it
@@ -1044,7 +1038,7 @@ pub fn Wave(comptime T: type) type {
             const root = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = chunks } };
             var w = std.Io.Writer.Allocating.init(allocator);
             errdefer w.deinit();
-            try riff.write(root, allocator, &w.writer);
+            try riff.write(root, &w.writer);
             return w.toOwnedSlice();
         }
 
@@ -1375,9 +1369,7 @@ pub fn Wave(comptime T: type) type {
             }
         }
 
-        // The test below pins down how `read` behaves with a `*std.Io.Reader`: it only
-        // relies on `reader.buffered()` (through riff_zig), so it sees the bytes already
-        // in the reader's buffer and never fills the reader itself.
+        // The tests below pin down how `read` behaves with a `*std.Io.Reader`.
 
         test "read fails on an empty reader" {
             const allocator = std.testing.allocator;
@@ -1386,7 +1378,7 @@ pub fn Wave(comptime T: type) type {
             try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
         }
 
-        test "read from a file reader needs the buffer to be filled first" {
+        test "read from a file reader works directly with a small buffer" {
             const allocator = std.testing.allocator;
             const io = std.testing.io;
 
@@ -1399,24 +1391,13 @@ pub fn Wave(comptime T: type) type {
             const file = try tmp.dir.openFile(io, "input.wav", .{});
             defer file.close(io);
 
-            // Nothing has been read from the file yet, so `buffered()` is empty
-            {
-                var buffer: [wavedata.len]u8 = undefined;
-                var file_reader = file.reader(io, &buffer);
-                try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &file_reader.interface));
-            }
+            var buffer: [256]u8 = undefined;
+            var file_reader = file.reader(io, &buffer);
 
-            // Once the whole file is in the buffer, the same reader type works
-            {
-                var buffer: [wavedata.len]u8 = undefined;
-                var file_reader = file.reader(io, &buffer);
-                try file_reader.interface.fill(wavedata.len);
+            const result = try Wave(T).read(allocator, &file_reader.interface);
+            defer result.deinit(allocator);
 
-                const result = try Wave(T).read(allocator, &file_reader.interface);
-                defer result.deinit(allocator);
-
-                try std.testing.expectEqual(16, result.bits);
-            }
+            try std.testing.expectEqual(16, result.bits);
         }
     };
 }
