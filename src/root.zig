@@ -48,7 +48,7 @@ pub fn Wave(comptime T: type) type {
         sample_rate: u32,
         channels: u16,
         bits: u16,
-        samples: []T,
+        samples: []const T,
 
         /// Deinitializes the Wave structure and frees the allocated samples memory
         pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
@@ -86,7 +86,7 @@ pub fn Wave(comptime T: type) type {
             sample_rate: u32,
             channels: u16,
             bits: u16,
-            samples: []T,
+            samples: []const T,
         };
 
         pub fn init(options: InitOptions) Self {
@@ -170,12 +170,20 @@ pub fn Wave(comptime T: type) type {
                             if (c.size < 16)
                                 return error.InvalidFormat;
 
-                            const fmt_data = it.readDataAlloc(allocator) catch |err| return switch (err) {
-                                error.OutOfMemory => error.OutOfMemory,
+                            var sub_buf: [64]u8 = undefined;
+                            const data_reader = it.dataReader(&sub_buf) catch |err| return switch (err) {
+                                error.SizeMismatch => error.SizeMismatch,
                                 error.ReadFailed => error.ReadFailed,
                                 else => error.InvalidFormat,
                             };
-                            defer allocator.free(fmt_data);
+
+                            var fmt_buf: [64]u8 = undefined;
+                            const to_read = @min(c.size, fmt_buf.len);
+                            data_reader.readSliceAll(fmt_buf[0..to_read]) catch |err| return switch (err) {
+                                error.EndOfStream => error.SizeMismatch,
+                                error.ReadFailed => error.ReadFailed,
+                            };
+                            const fmt_data = fmt_buf[0..to_read];
 
                             const tag = std.mem.readInt(u16, fmt_data[0..2], .little);
                             format_code = if (tag == wave_format_extensible)
@@ -357,17 +365,6 @@ pub fn Wave(comptime T: type) type {
             return @enumFromInt(std.mem.readInt(u16, data[24..26], .little));
         }
 
-        /// Appends a chunk that takes ownership of `data`, freeing it if appending fails
-        fn appendChunk(
-            list: *std.array_list.Aligned(riff.Chunk, null),
-            allocator: std.mem.Allocator,
-            id: []const u8,
-            data: []u8,
-        ) !void {
-            errdefer allocator.free(data);
-            try list.append(allocator, .{ .chunk = .{ .four_cc = try riff.FourCC.new(id), .data = data } });
-        }
-
         /// Encodes one normalized sample of type T into `w` as the given (bits, format_code)
         fn encodeSample(bits: u16, format_code: FormatCode, s: T, w: *std.Io.Writer) !void {
             switch (bits) {
@@ -420,43 +417,35 @@ pub fn Wave(comptime T: type) type {
             }
         }
 
-        /// Builds the payload of the fmt chunk. The caller owns the returned slice.
-        fn fmtPayload(self: Self, allocator: std.mem.Allocator, block_align: u16, bytes_per_sec: u32) ![]u8 {
-            var payload = std.Io.Writer.Allocating.init(allocator);
-            defer payload.deinit();
-            const w = &payload.writer;
-
-            try w.writeInt(u16, @intFromEnum(self.format_code), .little);
-            try w.writeInt(u16, self.channels, .little);
-            try w.writeInt(u32, self.sample_rate, .little);
-            try w.writeInt(u32, bytes_per_sec, .little);
-            try w.writeInt(u16, block_align, .little);
-            try w.writeInt(u16, self.bits, .little);
-
-            return payload.toOwnedSlice();
+        /// Encodes the 16-byte payload of the fmt chunk directly into a stack buffer without heap allocation.
+        fn writeFmtBytes(self: Self, block_align: u16, bytes_per_sec: u32) [16]u8 {
+            var buf: [16]u8 = undefined;
+            std.mem.writeInt(u16, buf[0..2], @intFromEnum(self.format_code), .little);
+            std.mem.writeInt(u16, buf[2..4], self.channels, .little);
+            std.mem.writeInt(u32, buf[4..8], self.sample_rate, .little);
+            std.mem.writeInt(u32, buf[8..12], bytes_per_sec, .little);
+            std.mem.writeInt(u16, buf[12..14], block_align, .little);
+            std.mem.writeInt(u16, buf[14..16], self.bits, .little);
+            return buf;
         }
 
-        /// Builds the payload of the fact chunk. The caller owns the returned slice.
-        fn factPayload(allocator: std.mem.Allocator, frame_count: u32) ![]u8 {
-            var payload = std.Io.Writer.Allocating.init(allocator);
-            defer payload.deinit();
-            const w = &payload.writer;
-
-            try w.writeInt(u32, frame_count, .little);
-
-            return payload.toOwnedSlice();
+        /// Encodes the 4-byte payload of the fact chunk directly into a stack buffer without heap allocation.
+        fn writeFactBytes(frame_count: u32) [4]u8 {
+            var buf: [4]u8 = undefined;
+            std.mem.writeInt(u32, buf[0..4], frame_count, .little);
+            return buf;
         }
 
-        /// Builds the payload of the PEAK chunk. The caller owns the returned slice.
+        /// Builds the payload of the PEAK chunk in a single allocation. The caller owns the returned slice.
         fn peakPayload(self: Self, allocator: std.mem.Allocator, timestamp: u32) ![]u8 {
-            var payload = std.Io.Writer.Allocating.init(allocator);
-            defer payload.deinit();
-            const w = &payload.writer;
+            const peak_size = 8 + @as(usize, self.channels) * 8;
+            const buf = try allocator.alloc(u8, peak_size);
+            errdefer allocator.free(buf);
 
             // Version (usually 1)
-            try w.writeInt(u32, 1, .little);
+            std.mem.writeInt(u32, buf[0..4], 1, .little);
             // Timestamp (Unix time or 0)
-            try w.writeInt(u32, timestamp, .little);
+            std.mem.writeInt(u32, buf[4..8], timestamp, .little);
 
             // Calculate peak for each channel
             for (0..self.channels) |ch| {
@@ -472,11 +461,12 @@ pub fn Wave(comptime T: type) type {
                     }
                 }
 
-                try w.writeAll(std.mem.asBytes(&max_val));
-                try w.writeInt(u32, max_pos, .little);
+                const offset = 8 + ch * 8;
+                @memcpy(buf[offset..][0..4], std.mem.asBytes(&max_val));
+                std.mem.writeInt(u32, buf[offset + 4 ..][0..4], max_pos, .little);
             }
 
-            return payload.toOwnedSlice();
+            return buf;
         }
 
         /// Builds the payload of the data chunk. The caller owns the returned slice.
@@ -520,6 +510,10 @@ pub fn Wave(comptime T: type) type {
         /// formats (32 and 64-bit) store the sample bits directly and are unaffected: `NaN`
         /// and infinities round-trip as-is.
         ///
+        ///
+        /// `write` only borrows `self.samples` and never mutates them. Callers holding
+        /// `[]const T` can write without copying or casting.
+        ///
         /// Parameters:
         ///   - self: The Wave(T) structure containing the audio data to write
         ///   - writer: Writer interface where the WAV file will be written
@@ -549,12 +543,6 @@ pub fn Wave(comptime T: type) type {
             // Validate the format before writing anything, so that it is rejected even when there are no samples
             try checkSupported(self.bits, self.format_code);
 
-            var chunk_list: std.array_list.Aligned(riff.Chunk, null) = .empty;
-            errdefer {
-                for (chunk_list.items) |c| c.deinit(options.allocator);
-                chunk_list.deinit(options.allocator);
-            }
-
             const bits_per_sample: u16 = self.bits;
             const bytes_per_sample: u16 = bits_per_sample / 8;
 
@@ -566,17 +554,49 @@ pub fn Wave(comptime T: type) type {
                 return error.SizeOverflow;
             const frame_count = std.math.cast(u32, self.samples.len / self.channels) orelse return error.SizeOverflow;
 
-            try appendChunk(&chunk_list, options.allocator, "fmt ", try self.fmtPayload(options.allocator, block_align, bytes_per_sec));
+            var chunks: [4]riff.Chunk = undefined;
+            var chunk_count: usize = 0;
 
-            if (options.use_fact)
-                try appendChunk(&chunk_list, options.allocator, "fact", try factPayload(options.allocator, frame_count));
+            const fmt_bytes = self.writeFmtBytes(block_align, bytes_per_sec);
+            chunks[chunk_count] = .{ .chunk = .{
+                .four_cc = try riff.FourCC.new("fmt "),
+                .data = &fmt_bytes,
+            } };
+            chunk_count += 1;
 
-            if (options.use_peak)
-                try appendChunk(&chunk_list, options.allocator, "PEAK", try self.peakPayload(options.allocator, options.peak_timestamp));
+            var fact_bytes: [4]u8 = undefined;
+            if (options.use_fact) {
+                fact_bytes = writeFactBytes(frame_count);
+                chunks[chunk_count] = .{ .chunk = .{
+                    .four_cc = try riff.FourCC.new("fact"),
+                    .data = &fact_bytes,
+                } };
+                chunk_count += 1;
+            }
 
-            try appendChunk(&chunk_list, options.allocator, "data", try self.dataPayload(options.allocator, data_bytes));
-            const wave_riff = riff.Chunk{ .riff = .{ .four_cc = try riff.FourCC.new("WAVE"), .chunks = try chunk_list.toOwnedSlice(options.allocator) } };
-            defer wave_riff.deinit(options.allocator);
+            var peak_data: ?[]u8 = null;
+            defer if (peak_data) |p| options.allocator.free(p);
+            if (options.use_peak) {
+                peak_data = try self.peakPayload(options.allocator, options.peak_timestamp);
+                chunks[chunk_count] = .{ .chunk = .{
+                    .four_cc = try riff.FourCC.new("PEAK"),
+                    .data = peak_data.?,
+                } };
+                chunk_count += 1;
+            }
+
+            const data_payload = try self.dataPayload(options.allocator, data_bytes);
+            defer options.allocator.free(data_payload);
+            chunks[chunk_count] = .{ .chunk = .{
+                .four_cc = try riff.FourCC.new("data"),
+                .data = data_payload,
+            } };
+            chunk_count += 1;
+
+            const wave_riff = riff.Chunk{ .riff = .{
+                .four_cc = try riff.FourCC.new("WAVE"),
+                .chunks = chunks[0..chunk_count],
+            } };
 
             riff.write(wave_riff, writer) catch return error.WriteFailed;
         }
@@ -731,15 +751,12 @@ pub fn Wave(comptime T: type) type {
             const allocator = std.testing.allocator;
 
             for (wav_cases) |c| {
-                const samples = try allocator.dupe(T, c.samples);
-                defer allocator.free(samples);
-
                 const result: Wave(T) = Wave(T).init(.{
                     .format_code = c.format_code,
                     .sample_rate = 44100,
                     .channels = 1,
                     .bits = c.bits,
-                    .samples = samples,
+                    .samples = c.samples,
                 });
 
                 var w = std.Io.Writer.Allocating.init(allocator);
@@ -1433,6 +1450,82 @@ pub fn Wave(comptime T: type) type {
             defer result.deinit(allocator);
 
             try std.testing.expectEqual(16, result.bits);
+        }
+
+        test "read and write perform minimal allocations" {
+            const CountAlloc = struct {
+                child: std.mem.Allocator,
+                allocs: usize = 0,
+
+                fn allocator(self: *@This()) std.mem.Allocator {
+                    return .{
+                        .ptr = self,
+                        .vtable = &.{
+                            .alloc = alloc,
+                            .resize = resize,
+                            .remap = remap,
+                            .free = free,
+                        },
+                    };
+                }
+
+                fn alloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+                    const self: *@This() = @ptrCast(@alignCast(ctx));
+                    self.allocs += 1;
+                    return self.child.vtable.alloc(self.child.ptr, len, ptr_align, ret_addr);
+                }
+
+                fn resize(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+                    const self: *@This() = @ptrCast(@alignCast(ctx));
+                    return self.child.vtable.resize(self.child.ptr, buf, buf_align, new_len, ret_addr);
+                }
+
+                fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+                    const self: *@This() = @ptrCast(@alignCast(ctx));
+                    return self.child.vtable.remap(self.child.ptr, memory, alignment, new_len, ret_addr);
+                }
+
+                fn free(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
+                    const self: *@This() = @ptrCast(@alignCast(ctx));
+                    self.child.vtable.free(self.child.ptr, buf, buf_align, ret_addr);
+                }
+            };
+
+            var counter = CountAlloc{ .child = std.testing.allocator };
+            const ca = counter.allocator();
+
+            // 1. read should perform exactly 1 allocation (the returned samples slice)
+            const wavedata = @embedFile("./assets/16bit_pcm.wav");
+            var reader = std.Io.Reader.fixed(wavedata);
+            const read_result = try Wave(T).read(ca, &reader);
+            defer read_result.deinit(ca);
+
+            try std.testing.expectEqual(1, counter.allocs);
+
+            // 2. write should perform exactly 1 allocation (the data chunk payload)
+            counter.allocs = 0;
+            var out_buf: [1024]u8 = undefined;
+            var w = std.Io.Writer.fixed(&out_buf);
+            try read_result.write(&w, .{ .allocator = ca });
+
+            try std.testing.expectEqual(1, counter.allocs);
+        }
+
+        test "write accepts read-only samples slice without copying" {
+            const allocator = std.testing.allocator;
+            const const_samples: []const T = &[_]T{ 0.0, 0.5, -0.5, 0.25 };
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 2,
+                .bits = 16,
+                .samples = const_samples,
+            });
+
+            var out_buf: [1024]u8 = undefined;
+            var w = std.Io.Writer.fixed(&out_buf);
+            try wave.write(&w, .{ .allocator = allocator });
+            try std.testing.expect(w.end > 0);
         }
     };
 }
