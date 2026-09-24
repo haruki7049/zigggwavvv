@@ -87,3 +87,79 @@ ______________________________________________________________________
 1. **Conventional Commits**: Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `build:`, `test:`, `ci:`), optionally with a scope such as `build(flake.lock):`.
 1. **PR Description**: Include a clear summary of changes, an explicit issue-closing keyword (e.g., `Closes #123`), and confirmation of completed verification commands.
 1. **English Only**: Write commit messages, PR titles, PR descriptions, code comments, and documentation in English.
+
+______________________________________________________________________
+
+## 7. Versioning and Releasing
+
+### Versioning
+
+This project follows [Semantic Versioning](https://semver.org/). The public API is covered by it.
+
+| Change | Release |
+| --- | --- |
+| Removing or changing a public declaration, changing a function signature or a type, or changing behavior that callers rely on | major |
+| Raising `minimum_zig_version` in `build.zig.zon` (the library then no longer works with earlier Zig releases) | major |
+| Adding a public declaration, a function, or a field with a default | minor |
+| Adding a member to an error set (`ReadError` and `WriteError`, including a member that comes in with an update of `riff_zig`) | minor |
+| Fixing a bug without changing the documented behavior | patch |
+
+Adding a member to an error set breaks a `switch` over it that has no `else` prong. This is why the documentation tells callers to keep an `else` prong, and why it is not counted as a breaking change.
+
+The `version` in `build.zig.zon` is the single source of truth for the version. Zig accepts only a full version (`2.0.0`, `2.0.0-rc.1`), without a `v` prefix.
+
+### Releasing
+
+A release is made by merging a change of `version` in `build.zig.zon` to `main`. A workflow (`.github/workflows/release.yml`) does the rest.
+
+#### Before releasing
+
+- The CI is green on the latest commit of `main`.
+- Every change that should be in the release is merged, and the open issues are checked.
+- The breaking changes are listed (pull requests marked with `!`, and the "Breaking Changes" parts of merged pull requests), and the migration guide is drafted (see "Migration guide").
+- For a major release, a release candidate was tried first, for example with a downstream project (see "Release candidates").
+
+#### Steps
+
+1. Choose the version following the table in "Versioning". Use a pre-release version for a release candidate, for example `2.0.0-rc.1` (then `2.0.0-rc.2`, and so on).
+1. Open a pull request that only changes `version` in `build.zig.zon` (title `build: bump version to X.Y.Z`) and merge it. See "Pull Request Guidelines" for the conventions.
+1. The workflow reads the version and checks that it is valid. If a tag with that name already exists, it stops. Otherwise it runs `zig build test` and `zig build`, creates the tag on the merged commit, and creates the GitHub Release with the generated "What's Changed" notes. A version that contains `-` is created as a pre-release.
+1. Check the workflow run in the Actions tab, and check the new release.
+
+A change of `build.zig.zon` that does not change `version` (for example an update of `riff_zig`) also starts the workflow, and it does nothing, because the tag of that version already exists.
+
+#### Migration guide
+
+For a release with breaking changes, add a section with the breaking changes and the migration steps to the release body. An AI assistant drafts the migration guide and the maintainer reviews it before it is published. It is not stored in the repository. The workflow writes only the generated notes, so add the guide afterwards by editing the release. These commands keep the generated notes:
+
+```bash
+version=2.0.0-rc.1
+gh release view "$version" --json body --jq .body > generated.md
+# write the reviewed migration guide to migration.md, then:
+{ cat migration.md; echo; cat generated.md; } > body.md
+gh release edit "$version" --notes-file body.md
+```
+
+#### Release candidates
+
+A release candidate is a pre-release, so GitHub keeps marking the last final release as the latest one. Try the candidate (for example in a downstream project) before you release the final version. If the candidate needs fixes, release `2.0.0-rc.2`. The final release is a separate version bump to `2.0.0`.
+
+#### Undoing a release
+
+If a release was created by mistake, delete it together with its tag, then fix the problem and merge a new change:
+
+```bash
+gh release delete "$version" --cleanup-tag --yes
+```
+
+Do not reuse a version whose contents may already have been fetched by others: publish the next version instead.
+
+#### If the workflow fails
+
+Open the failed run in the Actions tab and read the error.
+
+- The version is not valid: fix `version` in a new pull request.
+- The tests failed: fix the problem on `main` first.
+- The tag or the release could not be created: check the workflow permissions in the repository settings (Settings, Actions, General) and the rules that protect branches and tags, because they can stop a workflow from creating a tag.
+
+After fixing the cause, run the workflow again from the Actions tab on `main` ("Run workflow"). It does nothing if the version is already released.
