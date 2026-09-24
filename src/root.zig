@@ -892,6 +892,46 @@ pub fn Wave(comptime T: type) type {
             }
         }
 
+        test "write and read multichannel samples at every PCM bit depth" {
+            const allocator = std.testing.allocator;
+
+            const Case = struct { bits: u16, tolerance: T };
+            const cases = [_]Case{
+                .{ .bits = 8, .tolerance = 1.0 / 127.0 },
+                .{ .bits = 16, .tolerance = 1.0 / 32767.0 },
+                .{ .bits = 24, .tolerance = 1.0 / 8388607.0 },
+                .{ .bits = 32, .tolerance = 1.0 / 2147483647.0 },
+            };
+
+            // 3 channels and 3 frames: the data chunk is of odd size for 8 and 24 bits, so it is padded
+            const samples = [_]T{ 0, 0.5, -0.5, 0.25, -0.25, 1, -1, 0.125, -0.125 };
+
+            for (cases) |c| {
+                const wave = Wave(T).init(.{
+                    .format_code = .pcm,
+                    .sample_rate = 44100,
+                    .channels = 3,
+                    .bits = c.bits,
+                    .samples = &samples,
+                });
+
+                var w = std.Io.Writer.Allocating.init(allocator);
+                defer w.deinit();
+                try wave.write(&w.writer, .{ .allocator = allocator });
+
+                var reader = std.Io.Reader.fixed(w.writer.buffered());
+                const result = try Wave(T).read(allocator, &reader);
+                defer result.deinit(allocator);
+
+                try std.testing.expectEqual(3, result.channels);
+                try std.testing.expectEqual(c.bits, result.bits);
+                try std.testing.expectEqual(samples.len, result.samples.len);
+                for (samples, result.samples) |expected, actual| {
+                    try std.testing.expectApproxEqAbs(expected, actual, c.tolerance);
+                }
+            }
+        }
+
         test "write and read empty samples" {
             const allocator = std.testing.allocator;
 
@@ -1147,6 +1187,58 @@ pub fn Wave(comptime T: type) type {
 
         test "write does not leak when an allocation fails" {
             try std.testing.checkAllAllocationFailures(std.testing.allocator, testWriteOnce, .{});
+        }
+
+        fn testReadOnce(allocator: std.mem.Allocator, bytes: []const u8) !void {
+            var reader = std.Io.Reader.fixed(bytes);
+            const result = try Wave(T).read(allocator, &reader);
+            result.deinit(allocator);
+        }
+
+        /// A mono 16-bit file with `count` samples, in a buffer that the caller frees
+        fn testReadFile(allocator: std.mem.Allocator, count: usize) ![]u8 {
+            const samples = try allocator.alloc(T, count);
+            defer allocator.free(samples);
+            @memset(samples, 0.25);
+
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 16,
+                .samples = samples,
+            });
+            var w = std.Io.Writer.Allocating.init(allocator);
+            errdefer w.deinit();
+            try wave.write(&w.writer, .{ .allocator = allocator });
+            return w.toOwnedSlice();
+        }
+
+        test "read does not leak when an allocation fails" {
+            const allocator = std.testing.allocator;
+
+            // `checkAllAllocationFailures` makes each `alloc` of `read` fail in turn. A growth that
+            // `remap` can do in place is not an `alloc`, so the growth has its own test below
+            const bytes = try testReadFile(allocator, 100);
+            defer allocator.free(bytes);
+            try std.testing.checkAllAllocationFailures(allocator, testReadOnce, .{bytes});
+        }
+
+        test "read frees its buffer when it cannot grow it" {
+            const allocator = std.testing.allocator;
+
+            // More than twice `max_initial_samples`, so that the buffer has to grow twice
+            const bytes = try testReadFile(allocator, max_initial_samples * 2 + 100);
+            defer allocator.free(bytes);
+
+            // Fail every in-place growth (`remap`), and then the second or the third `alloc`: the
+            // first or the second growth, which falls back to an `alloc`. The testing allocator
+            // reports a leak at the end of the test if `read` does not free the buffer it holds
+            for ([_]usize{ 1, 2 }) |fail_index| {
+                var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = fail_index, .resize_fail_index = 0 });
+                var reader = std.Io.Reader.fixed(bytes);
+                try std.testing.expectError(error.OutOfMemory, Wave(T).read(failing.allocator(), &reader));
+            }
         }
 
         test "write encodes 8bit pcm as unsigned with 128 as silence" {
