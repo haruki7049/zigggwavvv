@@ -162,6 +162,12 @@ pub fn Wave(comptime T: type) type {
         /// and `bits`: they are not used to decode the data chunk, and some encoders get them
         /// wrong, so a mismatch there does not by itself make a file unreadable.
         ///
+        /// Chunks after the data chunk, such as a `LIST` chunk with metadata, are skipped,
+        /// and bytes after the RIFF chunk are ignored. The sizes of the RIFF chunk and of the
+        /// data chunk must match the stream: a file that was cut short, a RIFF size that is
+        /// too small, or the placeholder size `0xFFFFFFFF` that streaming encoders write
+        /// when they cannot know the size in advance fails with `SizeMismatch`.
+        ///
         /// PCM samples are divided by the largest positive value of their integer format, so
         /// the lowest code (`-32768` in 16-bit PCM, the byte `0` in 8-bit PCM, and likewise
         /// for 24 and 32 bits) decodes to a value slightly below `-1.0`, for example
@@ -1458,6 +1464,77 @@ pub fn Wave(comptime T: type) type {
                 result.deinit(allocator);
                 return error.TestUnexpectedResult;
             } else |_| {}
+        }
+
+        test "read skips chunks after the data chunk and bytes after the RIFF chunk" {
+            const allocator = std.testing.allocator;
+
+            const list_children = [_]riff.Chunk{try testChunk("ISFT", "zigggwavvv\x00")};
+            const tails = [_]riff.Chunk{
+                .{ .list = .{ .four_cc = try riff.FourCC.new("INFO"), .chunks = &list_children } },
+                try testChunk("fact", "\x02\x00\x00\x00"),
+                try testChunk("junk", "abcd"),
+                // A chunk of odd size is padded to an even length
+                try testChunk("junk", "abc"),
+            };
+
+            for (tails) |tail| {
+                const chunks = [_]riff.Chunk{
+                    try testChunk("fmt ", &test_fmt_payload),
+                    try testChunk("data", &test_data_payload),
+                    tail,
+                };
+                const bytes = try testBuildWave(allocator, &chunks);
+                defer allocator.free(bytes);
+
+                var reader = std.Io.Reader.fixed(bytes);
+                const result = try Wave(T).read(allocator, &reader);
+                defer result.deinit(allocator);
+                try std.testing.expectEqualSlices(T, &[_]T{ 0, 1 }, result.samples);
+
+                // Bytes after the RIFF chunk are ignored
+                const with_trailer = try std.mem.concat(allocator, u8, &.{ bytes, "xxxxx" });
+                defer allocator.free(with_trailer);
+
+                var trailer_reader = std.Io.Reader.fixed(with_trailer);
+                const trailer_result = try Wave(T).read(allocator, &trailer_reader);
+                defer trailer_result.deinit(allocator);
+                try std.testing.expectEqualSlices(T, &[_]T{ 0, 1 }, trailer_result.samples);
+            }
+        }
+
+        test "read fails with a RIFF or data size that does not match the stream" {
+            const allocator = std.testing.allocator;
+
+            const chunks = [_]riff.Chunk{
+                try testChunk("fmt ", &test_fmt_payload),
+                try testChunk("data", &test_data_payload),
+            };
+            const valid = try testBuildWave(allocator, &chunks);
+            defer allocator.free(valid);
+
+            // The RIFF header is 12 bytes and the fmt chunk 24, so the data chunk size is at offset 40
+            const riff_size = std.mem.readInt(u32, valid[4..8], .little);
+            const Case = struct { riff_size: u32, data_size: ?u32 };
+            const cases = [_]Case{
+                // A RIFF chunk longer than the stream, as in a file that was cut short
+                .{ .riff_size = riff_size + 100, .data_size = null },
+                // A RIFF chunk shorter than its content
+                .{ .riff_size = riff_size - 4, .data_size = null },
+                // The placeholder that streaming encoders write when they cannot know the size in advance
+                .{ .riff_size = 0xFFFFFFFF, .data_size = 0xFFFFFFFF },
+            };
+
+            for (cases) |c| {
+                const bytes = try allocator.dupe(u8, valid);
+                defer allocator.free(bytes);
+                std.mem.writeInt(u32, bytes[4..8], c.riff_size, .little);
+                if (c.data_size) |size|
+                    std.mem.writeInt(u32, bytes[40..44], size, .little);
+
+                var reader = std.Io.Reader.fixed(bytes);
+                try std.testing.expectError(error.SizeMismatch, Wave(T).read(allocator, &reader));
+            }
         }
 
         test "read fails with multiple data chunks" {
