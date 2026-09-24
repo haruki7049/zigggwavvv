@@ -560,7 +560,12 @@ pub fn Wave(comptime T: type) type {
             use_fact: bool = false,
             /// Include 'PEAK' chunk containing peak amplitude information
             use_peak: bool = false,
-            /// Timestamp for the PEAK chunk (Unix time or 0)
+            /// Timestamp for the PEAK chunk: the time at which the peak data was made, in seconds
+            /// since 1970-01-01 (Unix time). It is only used with `use_peak`. A reader may compare
+            /// it with the modification date of the file and rescan the file if they differ, so
+            /// pass the current time when you write a new file. The default `0` (the date
+            /// 1970-01-01) never matches, so such a reader would rescan the file; the peak values
+            /// themselves stay correct
             peak_timestamp: u32 = 0,
         };
 
