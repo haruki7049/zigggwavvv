@@ -562,8 +562,11 @@ pub fn Wave(comptime T: type) type {
         /// scaled value is rounded to the nearest integer, with ties away from zero, so the
         /// error of a sample is at most half a step of the integer format.
         /// `NaN` and infinite samples are rejected rather than silently clamped. IEEE float
-        /// formats (32 and 64-bit) store the sample bits directly and are unaffected: `NaN`
-        /// and infinities round-trip as-is.
+        /// formats (32 and 64-bit) convert each sample to the width of the format: it is
+        /// rounded to `f32` or `f64` (exact when `T` has that width), and a finite value
+        /// beyond the range of that width becomes an infinity. `NaN` and infinities
+        /// round-trip as-is. The PEAK chunk stores its values as `f32`, so a peak beyond the
+        /// `f32` range is an infinity there as well.
         ///
         ///
         /// `write` only borrows `self.samples` and never mutates them. Callers holding
@@ -1326,6 +1329,57 @@ pub fn Wave(comptime T: type) type {
                     var w = std.Io.Writer.Allocating.init(allocator);
                     defer w.deinit();
                     try std.testing.expectError(error.NonFiniteSample, wave.write(&w.writer, .{ .allocator = allocator }));
+                }
+            }
+        }
+
+        test "write converts IEEE float samples to the width of the format" {
+            const allocator = std.testing.allocator;
+
+            // 32-bit float: rounded to f32, and a finite value beyond the f32 range becomes an infinity
+            {
+                const samples = [_]T{ 0.1, 1e300, -1e300, 0.5 };
+                const wave = Wave(T).init(.{
+                    .format_code = .ieee_float,
+                    .sample_rate = 44100,
+                    .channels = 1,
+                    .bits = 32,
+                    .samples = &samples,
+                });
+
+                var w = std.Io.Writer.Allocating.init(allocator);
+                defer w.deinit();
+                try wave.write(&w.writer, .{ .allocator = allocator });
+
+                // RIFF header (12) + fmt chunk (24) + data chunk header (8)
+                const data = w.writer.buffered()[44..];
+                const expected = [_]f32{ 0.1, std.math.inf(f32), -std.math.inf(f32), 0.5 };
+                for (expected, 0..) |e, i| {
+                    const written: f32 = @bitCast(std.mem.readInt(u32, data[i * 4 ..][0..4], .little));
+                    try std.testing.expectEqual(e, written);
+                }
+            }
+
+            // 64-bit float from a type wider than f64: a finite value beyond the f64 range becomes an infinity
+            if (@typeInfo(T).float.bits > 64) {
+                const samples = [_]T{ 1e400, -1e400, 0.5 };
+                const wave = Wave(T).init(.{
+                    .format_code = .ieee_float,
+                    .sample_rate = 44100,
+                    .channels = 1,
+                    .bits = 64,
+                    .samples = &samples,
+                });
+
+                var w = std.Io.Writer.Allocating.init(allocator);
+                defer w.deinit();
+                try wave.write(&w.writer, .{ .allocator = allocator });
+
+                const data = w.writer.buffered()[44..];
+                const expected = [_]f64{ std.math.inf(f64), -std.math.inf(f64), 0.5 };
+                for (expected, 0..) |e, i| {
+                    const written: f64 = @bitCast(std.mem.readInt(u64, data[i * 8 ..][0..8], .little));
+                    try std.testing.expectEqual(e, written);
                 }
             }
         }
