@@ -600,7 +600,13 @@ pub fn Wave(comptime T: type) type {
                 .chunks = chunks[0..chunk_count],
             } };
 
-            riff.write(wave_riff, writer) catch return error.WriteFailed;
+            riff.write(wave_riff, writer) catch |err| return switch (err) {
+                error.WriteFailed => error.WriteFailed,
+                error.PayloadTooLarge => error.SizeOverflow,
+                // The chunks above are built to be valid, so riff_zig does not reject them. Its error set may
+                // gain members in minor releases, so anything else is reported as a rejected chunk tree
+                else => error.InvalidFormat,
+            };
         }
 
         /// A WAV asset together with the values `read` must return and the options `write` must use to reproduce it
@@ -829,6 +835,24 @@ pub fn Wave(comptime T: type) type {
             defer result.deinit(allocator);
 
             try std.testing.expectEqual(0, result.samples.len);
+        }
+
+        test "write reports a writer that fails as WriteFailed" {
+            const allocator = std.testing.allocator;
+
+            var samples = [_]T{ 0.0, 0.5, -0.5, 0.25 };
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 16,
+                .samples = &samples,
+            });
+
+            // The file needs 44 + 8 bytes; a writer with room for 10 fails while riff_zig writes
+            var buffer: [10]u8 = undefined;
+            var w = std.Io.Writer.fixed(&buffer);
+            try std.testing.expectError(error.WriteFailed, wave.write(&w, .{ .allocator = allocator }));
         }
 
         test "write fails with zero channels" {
