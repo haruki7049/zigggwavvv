@@ -8,7 +8,7 @@
 - **Wide Format Support**:
   - **PCM**: Support for 8, 16, 24, and 32-bit depths.
   - **IEEE Float**: Support for 32 and 64-bit depths.
-- **Flexible Type Support**: Supports processing audio samples as `f32`, `f64`, or `f128` types based on your precision needs.
+- **Flexible Type Support**: Supports processing audio samples as `f64`, `f80`, or `f128` types based on your precision needs. `Wave(T)` requires a float type with at least 64 bits, so `f32` and smaller types are rejected at compile time.
 - **Extended Chunk Support**: Optional generation of `fact` and `PEAK` chunks when writing files.
 
 ## Installation
@@ -41,7 +41,7 @@ exe.root_module.addImport("zigggwavvv", zigggwavvv.module("zigggwavvv"));
 
 ### Reading a WAV File
 
-`read` parses the bytes that are already in the reader's buffer, so load the whole file into memory and wrap it with `std.Io.Reader.fixed`. A file reader that has not been filled yet is rejected with `error.InvalidFormat`.
+`read` takes a `*std.Io.Reader` and streams the data from it, so it can read straight from a file reader without loading the whole file first. To read bytes that are already in memory, wrap them with `std.Io.Reader.fixed`.
 
 ```zig
 const std = @import("std");
@@ -51,13 +51,15 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
 
-    // Load the whole WAV file into memory
-    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, "input.wav", allocator, .unlimited);
-    defer allocator.free(bytes);
+    // Open the WAV file and read from it directly
+    const file = try std.Io.Dir.cwd().openFile(io, "input.wav", .{});
+    defer file.close(io);
+
+    var buffer: [4096]u8 = undefined;
+    var file_reader = file.reader(io, &buffer);
 
     // Parse the file into a Wave structure with f128 precision
-    var reader = std.Io.Reader.fixed(bytes);
-    const wave = try zigggwavvv.Wave(f128).read(allocator, &reader);
+    const wave = try zigggwavvv.Wave(f128).read(allocator, &file_reader.interface);
     defer wave.deinit(allocator);
 
     // Access samples (f128)
