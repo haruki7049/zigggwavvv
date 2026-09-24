@@ -462,7 +462,8 @@ pub fn Wave(comptime T: type) type {
                 }
 
                 const offset = 8 + ch * 8;
-                @memcpy(buf[offset..][0..4], std.mem.asBytes(&max_val));
+                // The peak is stored as a little-endian f32, whatever the byte order of the target
+                std.mem.writeInt(u32, buf[offset..][0..4], @bitCast(max_val), .little);
                 std.mem.writeInt(u32, buf[offset + 4 ..][0..4], max_pos, .little);
             }
 
@@ -778,6 +779,30 @@ pub fn Wave(comptime T: type) type {
 
                 try std.testing.expectEqualSlices(u8, c.asset, w.writer.buffered());
             }
+        }
+
+        test "the PEAK payload stores every field in little-endian order" {
+            const allocator = std.testing.allocator;
+
+            // Channel 0 holds 0.25 and -0.5 (peak 0.5 at frame 1), channel 1 holds -1.0 and 0.5 (peak 1.0 at frame 0)
+            const samples = [_]T{ 0.25, -1.0, -0.5, 0.5 };
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 2,
+                .bits = 16,
+                .samples = &samples,
+            });
+
+            const payload = try wave.peakPayload(allocator, 0x01020304);
+            defer allocator.free(payload);
+
+            try std.testing.expectEqualSlices(u8, &[_]u8{
+                1, 0, 0, 0, // version
+                4, 3, 2, 1, // timestamp 0x01020304
+                0x00, 0x00, 0x00, 0x3F, 1, 0, 0, 0, // channel 0: 0.5f32 (0x3F000000), frame 1
+                0x00, 0x00, 0x80, 0x3F, 0, 0, 0, 0, // channel 1: 1.0f32 (0x3F800000), frame 0
+            }, payload);
         }
 
         test "write and read multichannel samples" {
