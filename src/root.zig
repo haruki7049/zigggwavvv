@@ -74,6 +74,7 @@ pub fn Wave(comptime T: type) type {
             OutOfMemory,
             InvalidFormat,
             InvalidChannels,
+            InvalidSampleRate,
             InvalidSampleCount,
             SizeOverflow,
             UnsupportedFormatCode,
@@ -595,6 +596,9 @@ pub fn Wave(comptime T: type) type {
         ///   - OutOfMemory: Allocation failed
         ///   - InvalidFormat: A chunk identifier could not be built
         ///   - InvalidChannels: The number of channels is 0
+        ///   - InvalidSampleRate: The sample rate is 0. The WAVE format does not name a lowest valid
+        ///     rate, but a rate of 0 leaves the duration and the byte rate undefined, so `read`
+        ///     rejects such a file too
         ///   - InvalidSampleCount: The number of samples is not a multiple of the number of channels
         ///   - SizeOverflow: A size (block align, byte rate, frame count, or the size of the RIFF chunk with
         ///     its data, fmt, fact and PEAK chunks) does not fit its RIFF field
@@ -609,6 +613,13 @@ pub fn Wave(comptime T: type) type {
         ) WriteError!void {
             if (self.channels == 0)
                 return error.InvalidChannels;
+
+            // The documentation of WAVEFORMATEX defines the sample rate as the frequency at which each
+            // channel is played or recorded and gives no lowest value, but a rate of 0 leaves the
+            // duration and the byte rate undefined. `read` rejects a file with a zero sample rate, so
+            // `write` must not produce one
+            if (self.sample_rate == 0)
+                return error.InvalidSampleRate;
 
             if (self.samples.len % self.channels != 0)
                 return error.InvalidSampleCount;
@@ -988,6 +999,32 @@ pub fn Wave(comptime T: type) type {
             var buffer: [10]u8 = undefined;
             var w = std.Io.Writer.fixed(&buffer);
             try std.testing.expectError(error.WriteFailed, wave.write(&w, .{ .allocator = allocator }));
+        }
+
+        test "write fails with a zero sample rate" {
+            const allocator = std.testing.allocator;
+
+            // With and without samples, and with the optional chunks: the check comes before anything is written
+            var samples = [_]T{ 0.5, -0.5 };
+            const sample_sets = [_][]const T{ &samples, &[_]T{} };
+            for (sample_sets) |set| {
+                const wave = Wave(T).init(.{
+                    .format_code = .pcm,
+                    .sample_rate = 0,
+                    .channels = 1,
+                    .bits = 16,
+                    .samples = set,
+                });
+
+                var w = std.Io.Writer.Allocating.init(allocator);
+                defer w.deinit();
+                try std.testing.expectError(error.InvalidSampleRate, wave.write(&w.writer, .{
+                    .allocator = allocator,
+                    .use_fact = true,
+                    .use_peak = true,
+                }));
+                try std.testing.expectEqual(0, w.writer.buffered().len);
+            }
         }
 
         test "write fails with zero channels" {
