@@ -498,7 +498,7 @@ pub fn Wave(comptime T: type) type {
 
             // Version (usually 1)
             std.mem.writeInt(u32, buf[0..4], 1, .little);
-            // Timestamp (Unix time or 0)
+            // Timestamp: seconds since 1970-01-01 (Unix time), as given by `WriteOptions.peak_timestamp`
             std.mem.writeInt(u32, buf[4..8], timestamp, .little);
 
             // Calculate peak for each channel
@@ -585,6 +585,16 @@ pub fn Wave(comptime T: type) type {
         /// beyond the range of that width becomes an infinity. `NaN` and infinities
         /// round-trip as-is. The PEAK chunk stores its values as `f32`, so a peak beyond the
         /// `f32` range is an infinity there as well.
+        ///
+        /// For each channel the PEAK chunk holds the magnitude (the absolute value) of the
+        /// largest sample, so the value is never negative, and the number of the first frame
+        /// in which that magnitude occurs. The specification of the chunk calls the value "the
+        /// signed peak value" and does not say whether the sign of the sample is kept. This
+        /// library writes the magnitude, as libsndfile does, so that its files agree with those
+        /// of that widely used implementation. The specification is at
+        /// http://shoko.calarts.edu/~tre/PeakChunk.html (no longer online; a copy is kept at
+        /// https://web.archive.org/web/20060501212456/http://shoko.calarts.edu:80/~tre/PeakChunk.html).
+        /// If it turns out to require the sign, following it will be a change of behavior.
         ///
         /// `write` only borrows `self.samples` and never mutates them. Callers holding
         /// `[]const T` can write without copying or casting.
@@ -884,6 +894,26 @@ pub fn Wave(comptime T: type) type {
                 0x00, 0x00, 0x00, 0x3F, 1, 0, 0, 0, // channel 0: 0.5f32 (0x3F000000), frame 1
                 0x00, 0x00, 0x80, 0x3F, 0, 0, 0, 0, // channel 1: 1.0f32 (0x3F800000), frame 0
             }, payload);
+        }
+
+        test "the PEAK chunk holds the magnitude and the first frame of the largest sample" {
+            const allocator = std.testing.allocator;
+
+            // The largest magnitude, 0.5, occurs in frames 0 (negative), 2 and 3; the first one counts
+            const samples = [_]T{ -0.5, 0.25, 0.5, -0.5 };
+            const wave = Wave(T).init(.{
+                .format_code = .ieee_float,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 32,
+                .samples = &samples,
+            });
+
+            const payload = try wave.peakPayload(allocator, 0);
+            defer allocator.free(payload);
+
+            try std.testing.expectEqual(@as(f32, 0.5), @as(f32, @bitCast(std.mem.readInt(u32, payload[8..12], .little))));
+            try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, payload[12..16], .little));
         }
 
         test "the PEAK chunk of PCM describes the clamped samples that are written" {
