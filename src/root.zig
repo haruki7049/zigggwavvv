@@ -579,7 +579,9 @@ pub fn Wave(comptime T: type) type {
         ///   - OutOfMemory: Allocation failed
         ///   - InvalidFormat: A chunk identifier could not be built
         ///   - InvalidChannels: The number of channels is 0
-        ///   - InvalidSampleRate: The sample rate is 0
+        ///   - InvalidSampleRate: The sample rate is 0. The WAVE format does not name a lowest valid
+        ///     rate, but a rate of 0 leaves the duration and the byte rate undefined, so `read`
+        ///     rejects such a file too
         ///   - InvalidSampleCount: The number of samples is not a multiple of the number of channels
         ///   - SizeOverflow: A size (block align, byte rate, frame count, or the size of the RIFF chunk with
         ///     its data, fmt, fact and PEAK chunks) does not fit its RIFF field
@@ -595,7 +597,10 @@ pub fn Wave(comptime T: type) type {
             if (self.channels == 0)
                 return error.InvalidChannels;
 
-            // `read` rejects a file with a zero sample rate, so `write` must not produce one
+            // The documentation of WAVEFORMATEX defines the sample rate as the frequency at which each
+            // channel is played or recorded and gives no lowest value, but a rate of 0 leaves the
+            // duration and the byte rate undefined. `read` rejects a file with a zero sample rate, so
+            // `write` must not produce one
             if (self.sample_rate == 0)
                 return error.InvalidSampleRate;
 
