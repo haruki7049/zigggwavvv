@@ -78,8 +78,31 @@ pub fn Wave(comptime T: type) type {
             WriteFailed,
         };
 
-        /// The largest data chunk that leaves room for the other chunks within a RIFF size of 32 bits
-        const max_data_bytes: usize = std.math.maxInt(u32) - 1024;
+        /// The size in bytes of a chunk header (four-character code and size)
+        const chunk_header_bytes: usize = 8;
+
+        /// The size in bytes of the payload of the PEAK chunk: a version and a timestamp, then a value and a position per channel
+        fn peakPayloadSize(channels: u16) usize {
+            return 8 + @as(usize, channels) * 8;
+        }
+
+        /// The bytes the RIFF chunk holds besides the payload of the data chunk: the `WAVE` tag, the fmt chunk,
+        /// the optional fact and PEAK chunks, and the header of the data chunk
+        fn riffOverheadBytes(channels: u16, use_fact: bool, use_peak: bool) usize {
+            var bytes: usize = 4 + (chunk_header_bytes + 16) + chunk_header_bytes;
+            if (use_fact)
+                bytes += chunk_header_bytes + 4;
+            if (use_peak)
+                bytes += chunk_header_bytes + peakPayloadSize(channels);
+            return bytes;
+        }
+
+        /// Whether the data chunk, padded to an even length, and the other chunks (`overhead` bytes) fit within
+        /// the 32-bit size field of the RIFF chunk
+        fn fitsInRiffSize(data_bytes: usize, overhead: usize) bool {
+            const padded = std.math.add(usize, data_bytes, data_bytes & 1) catch return false;
+            return padded <= std.math.maxInt(u32) - overhead;
+        }
 
         /// The most samples `read` allocates before it has read any data. A larger data chunk
         /// grows the buffer as the data arrives, so a header cannot make `read` allocate more
@@ -467,7 +490,7 @@ pub fn Wave(comptime T: type) type {
 
         /// Builds the payload of the PEAK chunk in a single allocation. The caller owns the returned slice.
         fn peakPayload(self: Self, allocator: std.mem.Allocator, timestamp: u32) ![]u8 {
-            const peak_size = 8 + @as(usize, self.channels) * 8;
+            const peak_size = peakPayloadSize(self.channels);
             const buf = try allocator.alloc(u8, peak_size);
             errdefer allocator.free(buf);
 
@@ -556,7 +579,8 @@ pub fn Wave(comptime T: type) type {
         ///   - InvalidFormat: A chunk identifier could not be built
         ///   - InvalidChannels: The number of channels is 0
         ///   - InvalidSampleCount: The number of samples is not a multiple of the number of channels
-        ///   - SizeOverflow: A size (block align, byte rate, frame count or data size) does not fit its RIFF field
+        ///   - SizeOverflow: A size (block align, byte rate, frame count, or the size of the RIFF chunk with
+        ///     its data, fmt, fact and PEAK chunks) does not fit its RIFF field
         ///   - UnsupportedFormatCode: Audio format not supported for writing
         ///   - UnsupportedBits: Bit depth not supported for writing
         ///   - NonFiniteSample: A sample is NaN or infinite and the target format is PCM
@@ -582,7 +606,7 @@ pub fn Wave(comptime T: type) type {
             const block_align = std.math.mul(u16, self.channels, bytes_per_sample) catch return error.SizeOverflow;
             const bytes_per_sec = std.math.mul(u32, self.sample_rate, block_align) catch return error.SizeOverflow;
             const data_bytes = std.math.mul(usize, self.samples.len, bytes_per_sample) catch return error.SizeOverflow;
-            if (data_bytes > max_data_bytes)
+            if (!fitsInRiffSize(data_bytes, riffOverheadBytes(self.channels, options.use_fact, options.use_peak)))
                 return error.SizeOverflow;
             const frame_count = std.math.cast(u32, self.samples.len / self.channels) orelse return error.SizeOverflow;
 
@@ -960,6 +984,81 @@ pub fn Wave(comptime T: type) type {
                 defer w.deinit();
                 try std.testing.expectError(error.SizeOverflow, wave.write(&w.writer, .{ .allocator = allocator }));
             }
+        }
+
+        test "the RIFF size field is the overhead plus the padded data chunk" {
+            const allocator = std.testing.allocator;
+
+            const Case = struct { channels: u16, bits: u16, frames: usize, use_fact: bool, use_peak: bool };
+            const cases = [_]Case{
+                .{ .channels = 1, .bits = 16, .frames = 3, .use_fact = false, .use_peak = false },
+                .{ .channels = 1, .bits = 16, .frames = 3, .use_fact = true, .use_peak = false },
+                .{ .channels = 2, .bits = 24, .frames = 5, .use_fact = false, .use_peak = true },
+                // An odd data chunk is padded to an even length
+                .{ .channels = 1, .bits = 8, .frames = 5, .use_fact = true, .use_peak = true },
+                .{ .channels = 7, .bits = 32, .frames = 2, .use_fact = true, .use_peak = true },
+            };
+
+            for (cases) |c| {
+                const samples = try allocator.alloc(T, c.frames * c.channels);
+                defer allocator.free(samples);
+                @memset(samples, 0.25);
+
+                const wave = Wave(T).init(.{
+                    .format_code = .pcm,
+                    .sample_rate = 44100,
+                    .channels = c.channels,
+                    .bits = c.bits,
+                    .samples = samples,
+                });
+
+                var w = std.Io.Writer.Allocating.init(allocator);
+                defer w.deinit();
+                try wave.write(&w.writer, .{ .allocator = allocator, .use_fact = c.use_fact, .use_peak = c.use_peak });
+
+                const data_bytes = samples.len * (c.bits / 8);
+                const expected = riffOverheadBytes(c.channels, c.use_fact, c.use_peak) + data_bytes + (data_bytes & 1);
+                const written = w.writer.buffered();
+                try std.testing.expectEqual(expected, @as(usize, std.mem.readInt(u32, written[4..8], .little)));
+                // The RIFF size does not count the 8 bytes of the RIFF header
+                try std.testing.expectEqual(written.len - 8, expected);
+            }
+        }
+
+        test "a data chunk fits in the RIFF size field only together with the other chunks" {
+            const limit = std.math.maxInt(u32);
+
+            // With `overhead` bytes of other chunks, an even data chunk may be `limit - overhead` bytes long
+            try std.testing.expect(fitsInRiffSize(limit - 101, 100));
+            try std.testing.expect(!fitsInRiffSize(limit - 99, 100));
+            // An odd data chunk takes one more byte for its padding
+            try std.testing.expect(fitsInRiffSize(limit - 102, 100));
+            try std.testing.expect(!fitsInRiffSize(limit - 100, 100));
+            // Sizes near the largest usize cannot overflow the check itself
+            try std.testing.expect(!fitsInRiffSize(std.math.maxInt(usize), 100));
+        }
+
+        test "write rejects a data chunk that leaves no room for a large PEAK chunk" {
+            // A data chunk of 4294960000 bytes fits the RIFF size on its own, but not together with the
+            // PEAK chunk of 1000 channels (8016 bytes). The samples are never read, so the slice only needs a length
+            const channels = 1000;
+            const frames = 2_147_480;
+            const samples_ptr: [*]const T = @ptrFromInt(@alignOf(T));
+            const samples = samples_ptr[0 .. channels * frames];
+
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = channels,
+                .bits = 16,
+                .samples = samples,
+            });
+
+            // The size check must fail before anything is allocated
+            var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+            var buffer: [64]u8 = undefined;
+            var w = std.Io.Writer.fixed(&buffer);
+            try std.testing.expectError(error.SizeOverflow, wave.write(&w, .{ .allocator = failing.allocator(), .use_peak = true }));
         }
 
         test "write accepts values close to the limits" {
