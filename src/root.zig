@@ -120,6 +120,12 @@ pub fn Wave(comptime T: type) type {
         /// and `bits`: they are not used to decode the data chunk, and some encoders get them
         /// wrong, so a mismatch there does not by itself make a file unreadable.
         ///
+        /// PCM samples are divided by the largest positive value of their integer format, so
+        /// the lowest code (`-32768` in 16-bit PCM, the byte `0` in 8-bit PCM, and likewise
+        /// for 24 and 32 bits) decodes to a value slightly below `-1.0`, for example
+        /// `-32768 / 32767`. `write` clamps to `+-maxInt` and never produces that code, so a
+        /// file that contains it is written back with the next higher code.
+        ///
         /// Parameters:
         ///   - allocator: Memory allocator for sample data
         ///   - reader: Reader interface providing the WAV file data
@@ -1145,6 +1151,52 @@ pub fn Wave(comptime T: type) type {
                 for (samples, result.samples) |expected, actual| {
                     try std.testing.expectApproxEqAbs(expected, actual, case.tolerance);
                 }
+            }
+        }
+
+        test "read decodes the lowest PCM code below -1.0 and write gives the next higher code" {
+            const allocator = std.testing.allocator;
+
+            const Case = struct { bits: u16, lowest: []const u8, written: []const u8 };
+            const cases = [_]Case{
+                .{ .bits = 8, .lowest = &.{0x00}, .written = &.{0x01} },
+                .{ .bits = 16, .lowest = &.{ 0x00, 0x80 }, .written = &.{ 0x01, 0x80 } },
+                .{ .bits = 24, .lowest = &.{ 0x00, 0x00, 0x80 }, .written = &.{ 0x01, 0x00, 0x80 } },
+                .{ .bits = 32, .lowest = &.{ 0x00, 0x00, 0x00, 0x80 }, .written = &.{ 0x01, 0x00, 0x00, 0x80 } },
+            };
+
+            for (cases) |c| {
+                // PCM, mono, 44100Hz
+                const bytes_per_sample: u32 = c.bits / 8;
+                var fmt_payload = [_]u8{ 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                std.mem.writeInt(u32, fmt_payload[4..8], 44100, .little);
+                std.mem.writeInt(u32, fmt_payload[8..12], 44100 * bytes_per_sample, .little);
+                std.mem.writeInt(u16, fmt_payload[12..14], @intCast(bytes_per_sample), .little);
+                std.mem.writeInt(u16, fmt_payload[14..16], c.bits, .little);
+
+                const chunks = [_]riff.Chunk{
+                    try testChunk("fmt ", &fmt_payload),
+                    try testChunk("data", c.lowest),
+                };
+                const bytes = try testBuildWave(allocator, &chunks);
+                defer allocator.free(bytes);
+
+                var reader = std.Io.Reader.fixed(bytes);
+                const result = try Wave(T).read(allocator, &reader);
+                defer result.deinit(allocator);
+
+                // Below -1.0, but only by one step of the format
+                try std.testing.expectEqual(1, result.samples.len);
+                try std.testing.expect(result.samples[0] < -1.0);
+                try std.testing.expect(result.samples[0] > -1.01);
+
+                var w = std.Io.Writer.Allocating.init(allocator);
+                defer w.deinit();
+                try result.write(&w.writer, .{ .allocator = allocator });
+
+                // RIFF header (12) + fmt chunk (24) + data chunk header (8)
+                const data_offset = 44;
+                try std.testing.expectEqualSlices(u8, c.written, w.writer.buffered()[data_offset .. data_offset + c.written.len]);
             }
         }
 
