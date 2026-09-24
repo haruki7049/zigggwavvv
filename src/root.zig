@@ -372,7 +372,7 @@ pub fn Wave(comptime T: type) type {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
                         // 8-bit PCM is unsigned, with 128 as the zero level (silence)
-                        const centered: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i8), -std.math.maxInt(i8), std.math.maxInt(i8)));
+                        const centered: i16 = @intFromFloat(@round(std.math.clamp(s * std.math.maxInt(i8), -std.math.maxInt(i8), std.math.maxInt(i8))));
                         const val: u8 = @intCast(centered + 128);
                         try w.writeInt(u8, val, .little);
                     },
@@ -381,7 +381,7 @@ pub fn Wave(comptime T: type) type {
                 16 => switch (format_code) {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
-                        const val: i16 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16)));
+                        const val: i16 = @intFromFloat(@round(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16))));
                         try w.writeInt(i16, val, .little);
                     },
                     else => unreachable, // rejected by checkSupported
@@ -389,7 +389,7 @@ pub fn Wave(comptime T: type) type {
                 24 => switch (format_code) {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
-                        const val: i24 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24)));
+                        const val: i24 = @intFromFloat(@round(std.math.clamp(s * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24))));
                         try w.writeInt(i24, val, .little);
                     },
                     else => unreachable, // rejected by checkSupported
@@ -397,7 +397,7 @@ pub fn Wave(comptime T: type) type {
                 32 => switch (format_code) {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
-                        const val: i32 = @intFromFloat(std.math.clamp(s * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32)));
+                        const val: i32 = @intFromFloat(@round(std.math.clamp(s * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32))));
                         try w.writeInt(i32, val, .little);
                     },
                     .ieee_float => {
@@ -505,7 +505,9 @@ pub fn Wave(comptime T: type) type {
         /// PCM formats (8, 16, 24 and 32-bit) normalize a sample `s` in `-1.0..1.0` to the
         /// full integer range symmetrically: `+1.0` and `-1.0` both round-trip exactly, at
         /// the cost of the very bottom of the signed range (e.g. `i16`'s `minInt`) never
-        /// being produced by `write` (8-bit PCM is unsigned, with 128 as the zero level).
+        /// being produced by `write` (8-bit PCM is unsigned, with 128 as the zero level). The
+        /// scaled value is rounded to the nearest integer, with ties away from zero, so the
+        /// error of a sample is at most half a step of the integer format.
         /// `NaN` and infinite samples are rejected rather than silently clamped. IEEE float
         /// formats (32 and 64-bit) store the sample bits directly and are unaffected: `NaN`
         /// and infinities round-trip as-is.
@@ -988,7 +990,55 @@ pub fn Wave(comptime T: type) type {
 
             // RIFF header (12) + fmt chunk (24) + data chunk header (8); the data chunk is then padded to an even length
             const data_offset = 44;
-            try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 65, 128, 191, 255 }, w.writer.buffered()[data_offset .. data_offset + samples.len]);
+            // -0.5 and 0.5 scale to -63.5 and 63.5, which round away from zero to -64 and 64
+            try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 64, 128, 192, 255 }, w.writer.buffered()[data_offset .. data_offset + samples.len]);
+        }
+
+        test "write rounds PCM samples to the nearest integer" {
+            const allocator = std.testing.allocator;
+
+            const Case = struct { bits: u16, max: T };
+            const cases = [_]Case{
+                .{ .bits = 8, .max = 127 },
+                .{ .bits = 16, .max = 32767 },
+                .{ .bits = 24, .max = 8388607 },
+                .{ .bits = 32, .max = 2147483647 },
+            };
+
+            // Scaled values that lie below and above the middle of two integers, on both sides of zero,
+            // and the integers they must be rounded to (truncation would give 100, 100, -100, -100)
+            const scaled = [_]T{ 100.4, 100.6, -100.4, -100.6 };
+            const expected = [_]i32{ 100, 101, -100, -101 };
+
+            for (cases) |c| {
+                var samples: [scaled.len]T = undefined;
+                for (&samples, scaled) |*s, v| s.* = v / c.max;
+
+                const wave = Wave(T).init(.{
+                    .format_code = .pcm,
+                    .sample_rate = 44100,
+                    .channels = 1,
+                    .bits = c.bits,
+                    .samples = &samples,
+                });
+
+                var w = std.Io.Writer.Allocating.init(allocator);
+                defer w.deinit();
+                try wave.write(&w.writer, .{ .allocator = allocator });
+
+                // RIFF header (12) + fmt chunk (24) + data chunk header (8)
+                const data = w.writer.buffered()[44..];
+                for (expected, 0..) |code, i| {
+                    const written: i32 = switch (c.bits) {
+                        8 => @as(i32, data[i]) - 128,
+                        16 => std.mem.readInt(i16, data[i * 2 ..][0..2], .little),
+                        24 => std.mem.readInt(i24, data[i * 3 ..][0..3], .little),
+                        32 => std.mem.readInt(i32, data[i * 4 ..][0..4], .little),
+                        else => unreachable,
+                    };
+                    try std.testing.expectEqual(code, written);
+                }
+            }
         }
 
         test "write then read round-trips every supported format" {
