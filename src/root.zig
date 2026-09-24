@@ -59,27 +59,26 @@ pub fn Wave(comptime T: type) type {
             allocator.free(self.samples);
         }
 
-        /// Errors returned by `read`
-        pub const ReadError = error{
-            OutOfMemory,
-            InvalidFormat,
-            SizeMismatch,
-            ReadFailed,
+        /// Errors returned by `read`: the errors of the streaming RIFF reader of riff_zig
+        /// (`riff.stream.Error` and `riff.stream.AccessError`), allocation failures, and the
+        /// errors that only this library produces. riff_zig may add members to its error sets
+        /// in minor releases, so keep an `else` prong in a `switch` over this set.
+        pub const ReadError = riff.stream.Error || riff.stream.AccessError || std.mem.Allocator.Error || error{
             UnsupportedFormatCode,
             UnsupportedBits,
         };
 
-        /// Errors returned by `write`
-        pub const WriteError = error{
-            OutOfMemory,
-            InvalidFormat,
+        /// Errors returned by `write`: the errors of `riff.write` of riff_zig (which include
+        /// `std.Io.Writer.Error`), the error of building a chunk identifier, allocation failures,
+        /// and the errors that only this library produces. riff_zig may add members to its error
+        /// sets in minor releases, so keep an `else` prong in a `switch` over this set.
+        pub const WriteError = riff.WriteError || riff.FourCC.NewError || std.mem.Allocator.Error || error{
             InvalidChannels,
             InvalidSampleCount,
             SizeOverflow,
             UnsupportedFormatCode,
             UnsupportedBits,
             NonFiniteSample,
-            WriteFailed,
         };
 
         /// The size in bytes of a chunk header (four-character code and size)
@@ -137,15 +136,6 @@ pub fn Wave(comptime T: type) type {
             };
         }
 
-        /// Maps an error of the streaming RIFF reader to a `ReadError`
-        fn mapStreamError(err: riff.stream.Error) ReadError {
-            return switch (err) {
-                error.SizeMismatch => error.SizeMismatch,
-                error.ReadFailed => error.ReadFailed,
-                else => error.InvalidFormat,
-            };
-        }
-
         /// Reads a WAV file from the provided reader and returns a Wave structure.
         ///
         /// This function parses the RIFF/WAVE file format and extracts audio data,
@@ -190,14 +180,18 @@ pub fn Wave(comptime T: type) type {
         ///   - OutOfMemory: Allocation failed
         ///   - InvalidFormat: Not a valid WAVE file
         ///   - SizeMismatch: A chunk size does not match the file size
+        ///   - NestingTooDeep: Containers are nested deeper than riff_zig allows
         ///   - ReadFailed: The reader failed
         ///   - UnsupportedFormatCode: Audio format not supported
         ///   - UnsupportedBits: Bit depth not supported
+        ///   - AlreadyBorrowed, NoPayload: A wrong use of riff_zig's iterator (the members of
+        ///     `riff.stream.AccessError`), not a problem in the file. They do not occur when `read` is
+        ///     used as documented
         pub fn read(allocator: std.mem.Allocator, reader: *std.Io.Reader) ReadError!Self {
             var it = riff.stream.Iterator.init(reader, .{});
 
             // The root container must be a RIFF WAVE
-            const top_event = (it.next() catch |err| return mapStreamError(err)) orelse return error.InvalidFormat;
+            const top_event = (try it.next()) orelse return error.InvalidFormat;
             switch (top_event) {
                 .begin_container => |c| {
                     if (c.kind != .riff or !std.mem.eql(u8, &c.four_cc.inner, "WAVE"))
@@ -215,7 +209,7 @@ pub fn Wave(comptime T: type) type {
             var data_read = false;
             errdefer if (data_read) allocator.free(samples);
 
-            while (it.next() catch |err| return mapStreamError(err)) |ev| {
+            while (try it.next()) |ev| {
                 switch (ev) {
                     .chunk => |c| {
                         // Only consider chunks at depth 1 (direct children of RIFF WAVE)
@@ -232,11 +226,7 @@ pub fn Wave(comptime T: type) type {
                                 return error.InvalidFormat;
 
                             var sub_buf: [64]u8 = undefined;
-                            const data_reader = it.dataReader(&sub_buf) catch |err| return switch (err) {
-                                error.SizeMismatch => error.SizeMismatch,
-                                error.ReadFailed => error.ReadFailed,
-                                else => error.InvalidFormat,
-                            };
+                            const data_reader = try it.dataReader(&sub_buf);
 
                             var fmt_buf: [64]u8 = undefined;
                             const to_read = @min(c.size, fmt_buf.len);
@@ -296,11 +286,7 @@ pub fn Wave(comptime T: type) type {
 
                             if (samples_count > 0) {
                                 var sub_buf: [1024]u8 = undefined;
-                                const data_reader = it.dataReader(&sub_buf) catch |err| return switch (err) {
-                                    error.SizeMismatch => error.SizeMismatch,
-                                    error.ReadFailed => error.ReadFailed,
-                                    else => error.InvalidFormat,
-                                };
+                                const data_reader = try it.dataReader(&sub_buf);
 
                                 var block_buf: [4096]u8 = undefined;
                                 const block_samples = block_buf.len / bytes_per_sample;
@@ -602,6 +588,10 @@ pub fn Wave(comptime T: type) type {
         ///   - UnsupportedBits: Bit depth not supported for writing
         ///   - NonFiniteSample: A sample is NaN or infinite and the target format is PCM
         ///   - WriteFailed: The writer failed
+        ///   - PayloadTooLarge: `riff.write` found a size that does not fit its 32-bit field. `write` checks
+        ///     the sizes first, so it reports `SizeOverflow` for the sizes it knows
+        ///   - NestingTooDeep, OddContainerSize, ReservedFourCC: `riff.write` rejected the chunks that `write`
+        ///     built. They do not occur for the chunks `write` builds
         pub fn write(
             self: Self,
             writer: *std.Io.Writer,
@@ -671,13 +661,7 @@ pub fn Wave(comptime T: type) type {
                 .chunks = chunks[0..chunk_count],
             } };
 
-            riff.write(wave_riff, writer) catch |err| return switch (err) {
-                error.WriteFailed => error.WriteFailed,
-                error.PayloadTooLarge => error.SizeOverflow,
-                // The chunks above are built to be valid, so riff_zig does not reject them. Its error set may
-                // gain members in minor releases, so anything else is reported as a rejected chunk tree
-                else => error.InvalidFormat,
-            };
+            try riff.write(wave_riff, writer);
         }
 
         /// A WAV asset together with the values `read` must return and the options `write` must use to reproduce it
@@ -1681,6 +1665,66 @@ pub fn Wave(comptime T: type) type {
                 var reader = std.Io.Reader.fixed(bytes);
                 try std.testing.expectError(error.SizeMismatch, Wave(T).read(allocator, &reader));
             }
+        }
+
+        test "ReadError and WriteError include the errors of riff_zig" {
+            // These arrays only compile if every listed error is a member of the set
+            const read_errors = [_]ReadError{
+                error.InvalidFormat,
+                error.SizeMismatch,
+                error.ReadFailed,
+                error.NestingTooDeep,
+                error.AlreadyBorrowed,
+                error.NoPayload,
+                error.OutOfMemory,
+                error.UnsupportedFormatCode,
+                error.UnsupportedBits,
+            };
+            const write_errors = [_]WriteError{
+                error.WriteFailed,
+                error.PayloadTooLarge,
+                error.NestingTooDeep,
+                error.OddContainerSize,
+                error.ReservedFourCC,
+                error.InvalidFormat,
+                error.OutOfMemory,
+                error.InvalidChannels,
+                error.InvalidSampleCount,
+                error.SizeOverflow,
+                error.UnsupportedFormatCode,
+                error.UnsupportedBits,
+                error.NonFiniteSample,
+            };
+            try std.testing.expectEqual(9, read_errors.len);
+            try std.testing.expectEqual(13, write_errors.len);
+        }
+
+        test "read reports containers nested too deeply as NestingTooDeep" {
+            const allocator = std.testing.allocator;
+
+            // LIST chunks nested one in the other, inside the RIFF chunk, deeper than riff_zig allows
+            var payload: std.ArrayList(u8) = .empty;
+            defer payload.deinit(allocator);
+            for (0..riff.max_nesting_depth + 2) |_| {
+                var wrapped: std.ArrayList(u8) = .empty;
+                errdefer wrapped.deinit(allocator);
+                try wrapped.appendSlice(allocator, "LIST");
+                try wrapped.appendSlice(allocator, &std.mem.toBytes(std.mem.nativeToLittle(u32, @intCast(4 + payload.items.len))));
+                try wrapped.appendSlice(allocator, "INFO");
+                try wrapped.appendSlice(allocator, payload.items);
+                payload.deinit(allocator);
+                payload = wrapped;
+            }
+
+            var file: std.ArrayList(u8) = .empty;
+            defer file.deinit(allocator);
+            try file.appendSlice(allocator, "RIFF");
+            try file.appendSlice(allocator, &std.mem.toBytes(std.mem.nativeToLittle(u32, @intCast(4 + payload.items.len))));
+            try file.appendSlice(allocator, "WAVE");
+            try file.appendSlice(allocator, payload.items);
+
+            var reader = std.Io.Reader.fixed(file.items);
+            try std.testing.expectError(error.NestingTooDeep, Wave(T).read(allocator, &reader));
         }
 
         test "read fails with multiple data chunks" {
