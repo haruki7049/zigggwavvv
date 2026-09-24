@@ -506,7 +506,11 @@ pub fn Wave(comptime T: type) type {
 
                 var i: usize = ch;
                 while (i < self.samples.len) : (i += self.channels) {
-                    const abs_val = @abs(@as(f32, @floatCast(self.samples[i])));
+                    var abs_val = @abs(@as(f32, @floatCast(self.samples[i])));
+                    // PCM samples are clamped to +-1.0 when they are written, so the peak of what is
+                    // written is at most 1.0. NaN compares false and stays out of the peak
+                    if (self.format_code == .pcm and abs_val > 1.0)
+                        abs_val = 1.0;
                     if (abs_val > max_val) {
                         max_val = abs_val;
                         max_pos = @intCast(i / self.channels);
@@ -560,7 +564,9 @@ pub fn Wave(comptime T: type) type {
         /// the cost of the very bottom of the signed range (e.g. `i16`'s `minInt`) never
         /// being produced by `write` (8-bit PCM is unsigned, with 128 as the zero level). The
         /// scaled value is rounded to the nearest integer, with ties away from zero, so the
-        /// error of a sample is at most half a step of the integer format.
+        /// error of a sample is at most half a step of the integer format. Samples outside
+        /// `-1.0..1.0` are clamped, and the PEAK chunk of a PCM file describes the clamped
+        /// samples that are written (at most `1.0`); IEEE float formats keep the real values.
         /// `NaN` and infinite samples are rejected rather than silently clamped. IEEE float
         /// formats (32 and 64-bit) store the sample bits directly and are unaffected: `NaN`
         /// and infinities round-trip as-is.
@@ -856,6 +862,44 @@ pub fn Wave(comptime T: type) type {
                 0x00, 0x00, 0x00, 0x3F, 1, 0, 0, 0, // channel 0: 0.5f32 (0x3F000000), frame 1
                 0x00, 0x00, 0x80, 0x3F, 0, 0, 0, 0, // channel 1: 1.0f32 (0x3F800000), frame 0
             }, payload);
+        }
+
+        test "the PEAK chunk of PCM describes the clamped samples that are written" {
+            const allocator = std.testing.allocator;
+
+            // Channel 0 holds 0.5 and 2.0 (written as 0.5 and 1.0), channel 1 holds -3.0 and 0.25
+            // (written as -1.0 and 0.25)
+            const samples = [_]T{ 0.5, -3.0, 2.0, 0.25 };
+
+            const Case = struct { format_code: FormatCode, bits: u16, peak0: f32, pos0: u32, peak1: f32, pos1: u32 };
+            const cases = [_]Case{
+                // PCM data is clamped to +-1.0, so the peak cannot be larger
+                .{ .format_code = .pcm, .bits = 8, .peak0 = 1.0, .pos0 = 1, .peak1 = 1.0, .pos1 = 0 },
+                .{ .format_code = .pcm, .bits = 16, .peak0 = 1.0, .pos0 = 1, .peak1 = 1.0, .pos1 = 0 },
+                .{ .format_code = .pcm, .bits = 32, .peak0 = 1.0, .pos0 = 1, .peak1 = 1.0, .pos1 = 0 },
+                // IEEE float data is stored as it is, so the peak is the real value
+                .{ .format_code = .ieee_float, .bits = 32, .peak0 = 2.0, .pos0 = 1, .peak1 = 3.0, .pos1 = 0 },
+                .{ .format_code = .ieee_float, .bits = 64, .peak0 = 2.0, .pos0 = 1, .peak1 = 3.0, .pos1 = 0 },
+            };
+
+            for (cases) |c| {
+                const wave = Wave(T).init(.{
+                    .format_code = c.format_code,
+                    .sample_rate = 44100,
+                    .channels = 2,
+                    .bits = c.bits,
+                    .samples = &samples,
+                });
+
+                const payload = try wave.peakPayload(allocator, 0);
+                defer allocator.free(payload);
+
+                // Version and timestamp (8 bytes), then a value and a position for each channel
+                try std.testing.expectEqual(c.peak0, @as(f32, @bitCast(std.mem.readInt(u32, payload[8..12], .little))));
+                try std.testing.expectEqual(c.pos0, std.mem.readInt(u32, payload[12..16], .little));
+                try std.testing.expectEqual(c.peak1, @as(f32, @bitCast(std.mem.readInt(u32, payload[16..20], .little))));
+                try std.testing.expectEqual(c.pos1, std.mem.readInt(u32, payload[20..24], .little));
+            }
         }
 
         test "write and read multichannel samples" {
