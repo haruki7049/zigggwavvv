@@ -167,6 +167,11 @@ pub fn Wave(comptime T: type) type {
 
                         const id = c.four_cc.inner;
                         if (std.mem.eql(u8, &id, "fmt ")) {
+                            // A WAV file has exactly one fmt chunk. A later one would change the
+                            // format after the samples were decoded with the earlier one
+                            if (fmt_read)
+                                return error.InvalidFormat;
+
                             if (c.size < 16)
                                 return error.InvalidFormat;
 
@@ -1291,6 +1296,42 @@ pub fn Wave(comptime T: type) type {
 
             var reader = std.Io.Reader.fixed(bytes);
             try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+        }
+
+        test "read fails with more than one fmt chunk" {
+            const allocator = std.testing.allocator;
+
+            // 8bit PCM, stereo, 44100Hz: a different format from `test_fmt_payload`
+            const other_fmt_payload = [_]u8{ 1, 0, 2, 0, 0x44, 0xAC, 0, 0, 0x88, 0x58, 0x01, 0, 2, 0, 8, 0 };
+
+            const cases = [_][]const riff.Chunk{
+                // A second fmt chunk after the data chunk
+                &.{
+                    try testChunk("fmt ", &test_fmt_payload),
+                    try testChunk("data", &test_data_payload),
+                    try testChunk("fmt ", &other_fmt_payload),
+                },
+                // A second fmt chunk before the data chunk
+                &.{
+                    try testChunk("fmt ", &test_fmt_payload),
+                    try testChunk("fmt ", &other_fmt_payload),
+                    try testChunk("data", &test_data_payload),
+                },
+                // Even a copy of the first fmt chunk is rejected
+                &.{
+                    try testChunk("fmt ", &test_fmt_payload),
+                    try testChunk("fmt ", &test_fmt_payload),
+                    try testChunk("data", &test_data_payload),
+                },
+            };
+
+            for (cases) |chunks| {
+                const bytes = try testBuildWave(allocator, chunks);
+                defer allocator.free(bytes);
+
+                var reader = std.Io.Reader.fixed(bytes);
+                try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+            }
         }
 
         test "read fails with zero channels or a zero sample rate" {
