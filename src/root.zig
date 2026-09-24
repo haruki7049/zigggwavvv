@@ -81,6 +81,11 @@ pub fn Wave(comptime T: type) type {
         /// The largest data chunk that leaves room for the other chunks within a RIFF size of 32 bits
         const max_data_bytes: usize = std.math.maxInt(u32) - 1024;
 
+        /// The most samples `read` allocates before it has read any data. A larger data chunk
+        /// grows the buffer as the data arrives, so a header cannot make `read` allocate more
+        /// than the stream holds
+        const max_initial_samples: usize = 1 << 16;
+
         pub const InitOptions = struct {
             format_code: FormatCode,
             sample_rate: u32,
@@ -232,8 +237,10 @@ pub fn Wave(comptime T: type) type {
                             if (c.size % frame_size != 0)
                                 return error.InvalidFormat;
 
+                            // The size comes from the file header, so it is not trusted: start with a
+                            // bounded buffer and grow it only as the data actually arrives
                             const samples_count = c.size / bytes_per_sample;
-                            var samples_list: []T = try allocator.alloc(T, samples_count);
+                            var samples_list: []T = try allocator.alloc(T, @min(samples_count, max_initial_samples));
                             errdefer allocator.free(samples_list);
 
                             if (samples_count > 0) {
@@ -250,6 +257,10 @@ pub fn Wave(comptime T: type) type {
                                 var samples_decoded: usize = 0;
                                 while (samples_decoded < samples_count) {
                                     const samples_to_read = @min(block_samples, samples_count - samples_decoded);
+                                    if (samples_decoded + samples_to_read > samples_list.len) {
+                                        const grown = @min(samples_count, @max(samples_list.len * 2, samples_decoded + samples_to_read));
+                                        samples_list = try allocator.realloc(samples_list, grown);
+                                    }
                                     const bytes_to_read = samples_to_read * bytes_per_sample;
                                     const chunk_bytes = block_buf[0..bytes_to_read];
                                     data_reader.readSliceAll(chunk_bytes) catch |err| return switch (err) {
@@ -1568,6 +1579,62 @@ pub fn Wave(comptime T: type) type {
 
             var reader = std.Io.Reader.fixed("");
             try std.testing.expectError(error.InvalidFormat, Wave(T).read(allocator, &reader));
+        }
+
+        test "read does not allocate the declared data size before reading it" {
+            const allocator = std.testing.allocator;
+
+            const chunks = [_]riff.Chunk{
+                try testChunk("fmt ", &test_fmt_payload),
+                try testChunk("data", &test_data_payload),
+            };
+            const bytes = try testBuildWave(allocator, &chunks);
+            defer allocator.free(bytes);
+
+            // Declare a data chunk of about 4 GiB, and a RIFF size that fits it, that the stream does not hold.
+            // The RIFF header is 12 bytes and the fmt chunk 24, so the data chunk size is at offset 40
+            std.mem.writeInt(u32, bytes[4..8], 0xFFFFFFF0, .little);
+            std.mem.writeInt(u32, bytes[40..44], 0xFFFFFF00, .little);
+
+            // 4 MiB is room for the bounded first allocation of any T, and far less than the declared size
+            const buffer = try allocator.alloc(u8, 4 << 20);
+            defer allocator.free(buffer);
+            var fba = std.heap.FixedBufferAllocator.init(buffer);
+
+            var reader = std.Io.Reader.fixed(bytes);
+            try std.testing.expectError(error.SizeMismatch, Wave(T).read(fba.allocator(), &reader));
+        }
+
+        test "read grows the sample buffer for a data chunk larger than the first allocation" {
+            const allocator = std.testing.allocator;
+
+            // More than two times the first allocation, so the buffer grows more than once
+            const count = max_initial_samples * 2 + 1234;
+            const samples = try allocator.alloc(T, count);
+            defer allocator.free(samples);
+            for (samples, 0..) |*s, i| {
+                s.* = @as(T, @floatFromInt(@as(i32, @intCast(i % 2001)) - 1000)) / 1000;
+            }
+
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 1,
+                .bits = 16,
+                .samples = samples,
+            });
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try wave.write(&w.writer, .{ .allocator = allocator });
+
+            var reader = std.Io.Reader.fixed(w.writer.buffered());
+            const result = try Wave(T).read(allocator, &reader);
+            defer result.deinit(allocator);
+
+            try std.testing.expectEqual(count, result.samples.len);
+            for (samples, result.samples) |expected, actual| {
+                try std.testing.expectApproxEqAbs(expected, actual, 1e-4);
+            }
         }
 
         test "read from a file reader works directly with a small buffer" {
