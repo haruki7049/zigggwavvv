@@ -164,6 +164,11 @@ pub fn Wave(comptime T: type) type {
         /// `-32768 / 32767`. `write` clamps to `+-maxInt` and never produces that code, so a
         /// file that contains it is written back with the next higher code.
         ///
+        /// Of a WAVE_FORMAT_EXTENSIBLE fmt chunk, `read` uses the sub-format and ignores the
+        /// valid bits per sample and the channel mask: samples are decoded by the size of
+        /// the container (`bits`), and the channel mask is not returned, so writing the
+        /// result back gives a plain, non-extensible fmt chunk.
+        ///
         /// Parameters:
         ///   - allocator: Memory allocator for sample data
         ///   - reader: Reader interface providing the WAV file data
@@ -1645,6 +1650,32 @@ pub fn Wave(comptime T: type) type {
             try std.testing.expectEqual(.ieee_float, result.format_code);
             try std.testing.expectEqual(32, result.bits);
             try std.testing.expectEqualSlices(T, &[_]T{0.5}, result.samples);
+        }
+
+        test "read ignores the valid bits and the channel mask of a WAVE_FORMAT_EXTENSIBLE fmt chunk" {
+            const allocator = std.testing.allocator;
+
+            // 16-bit container that declares 12 valid bits, and a channel mask of 6 speakers for 1 channel
+            var fmt_payload = extensibleFmtPayload(16, 1);
+            std.mem.writeInt(u16, fmt_payload[18..20], 12, .little);
+            std.mem.writeInt(u32, fmt_payload[20..24], 0x3F, .little);
+
+            const chunks = [_]riff.Chunk{
+                try testChunk("fmt ", &fmt_payload),
+                try testChunk("data", &test_data_payload),
+            };
+            const bytes = try testBuildWave(allocator, &chunks);
+            defer allocator.free(bytes);
+
+            var reader = std.Io.Reader.fixed(bytes);
+            const result = try Wave(T).read(allocator, &reader);
+            defer result.deinit(allocator);
+
+            // The samples are decoded by the size of the container, and the fmt fields come from the header
+            try std.testing.expectEqual(.pcm, result.format_code);
+            try std.testing.expectEqual(1, result.channels);
+            try std.testing.expectEqual(16, result.bits);
+            try std.testing.expectEqualSlices(T, &[_]T{ 0, 1 }, result.samples);
         }
 
         test "read rejects invalid WAVE_FORMAT_EXTENSIBLE fmt chunks" {
