@@ -12,12 +12,16 @@
 //! - Write WAV files with `wave.write()` method
 //! - Support for PCM format (8, 16, 24, 32-bit)
 //! - Support for IEEE float format (32, 64-bit)
+//! - Reading of WAVE_FORMAT_EXTENSIBLE `fmt ` chunks whose sub-format is PCM or IEEE float
 //! - Flexible sample type support (f64, f80, f128)
 //! - Optional fact and PEAK chunk generation for writing
 //!
 //! ## Example Usage
+//! `read` takes a `*std.Io.Reader`. This example reads from bytes that are already in
+//! memory; a file reader works as well (see the README).
 //! ```zig
-//! const wave = try Wave(f128).read(allocator, reader);
+//! var reader = std.Io.Reader.fixed(bytes);
+//! const wave = try Wave(f128).read(allocator, &reader);
 //! defer wave.deinit(allocator);
 //! // Process wave.samples...
 //! ```
@@ -564,7 +568,6 @@ pub fn Wave(comptime T: type) type {
         /// `NaN` and infinite samples are rejected rather than silently clamped. IEEE float
         /// formats (32 and 64-bit) store the sample bits directly and are unaffected: `NaN`
         /// and infinities round-trip as-is.
-        ///
         ///
         /// `write` only borrows `self.samples` and never mutates them. Callers holding
         /// `[]const T` can write without copying or casting.
