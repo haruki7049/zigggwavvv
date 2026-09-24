@@ -565,7 +565,12 @@ pub fn Wave(comptime T: type) type {
             /// it with the modification date of the file and rescan the file if they differ, so
             /// pass the current time when you write a new file. The default `0` (the date
             /// 1970-01-01) never matches, so such a reader would rescan the file; the peak values
-            /// themselves stay correct
+            /// themselves stay correct.
+            ///
+            /// This library defines a fixed value as acceptable when the output has to be
+            /// reproducible. That is the maintainer's own decision, made for the build-time
+            /// cache of haruki7049/lightmix, and it does not come from the specification, so do
+            /// not take it as authoritative
             peak_timestamp: u32 = 0,
         };
 
