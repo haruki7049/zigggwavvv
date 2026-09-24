@@ -86,6 +86,7 @@ pub fn Wave(comptime T: type) type {
         /// than the stream holds
         const max_initial_samples: usize = 1 << 16;
 
+        /// The fields of a `Wave(T)`, as taken by `init`
         pub const InitOptions = struct {
             format_code: FormatCode,
             sample_rate: u32,
@@ -94,6 +95,11 @@ pub fn Wave(comptime T: type) type {
             samples: []const T,
         };
 
+        /// Creates a `Wave(T)` from `options`.
+        ///
+        /// This only copies the fields: it neither validates them nor copies `samples`. `read`
+        /// and `write` check the format, the channel count and the sample count. Call `deinit`
+        /// only when `samples` was allocated with the allocator passed to it, as `read` does.
         pub fn init(options: InitOptions) Self {
             return .{
                 .format_code = options.format_code,
@@ -101,6 +107,15 @@ pub fn Wave(comptime T: type) type {
                 .channels = options.channels,
                 .bits = options.bits,
                 .samples = options.samples,
+            };
+        }
+
+        /// Maps an error of the streaming RIFF reader to a `ReadError`
+        fn mapStreamError(err: riff.stream.Error) ReadError {
+            return switch (err) {
+                error.SizeMismatch => error.SizeMismatch,
+                error.ReadFailed => error.ReadFailed,
+                else => error.InvalidFormat,
             };
         }
 
@@ -140,14 +155,6 @@ pub fn Wave(comptime T: type) type {
         ///   - ReadFailed: The reader failed
         ///   - UnsupportedFormatCode: Audio format not supported
         ///   - UnsupportedBits: Bit depth not supported
-        fn mapStreamError(err: riff.stream.Error) ReadError {
-            return switch (err) {
-                error.SizeMismatch => error.SizeMismatch,
-                error.ReadFailed => error.ReadFailed,
-                else => error.InvalidFormat,
-            };
-        }
-
         pub fn read(allocator: std.mem.Allocator, reader: *std.Io.Reader) ReadError!Self {
             var it = riff.stream.Iterator.init(reader, .{});
 
