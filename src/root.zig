@@ -5,7 +5,7 @@
 //! with various bit depths (8, 16, 24, 32, and 64-bit).
 //!
 //! The library provides flexible type support for audio sample processing, allowing you to
-//! choose the sample precision (f64, f80, or f128) based on your needs.
+//! choose the sample precision (f32, f64, f80, or f128) based on your needs.
 //!
 //! ## Main Features
 //! - Read WAV files with `Wave(T).read()` method
@@ -13,7 +13,7 @@
 //! - Support for PCM format (8, 16, 24, 32-bit)
 //! - Support for IEEE float format (32, 64-bit)
 //! - Reading of WAVE_FORMAT_EXTENSIBLE `fmt ` chunks whose sub-format is PCM or IEEE float
-//! - Flexible sample type support (f64, f80, f128)
+//! - Flexible sample type support (f32, f64, f80, f128)
 //! - Optional fact and PEAK chunk generation for writing
 //!
 //! ## Example Usage
@@ -41,12 +41,16 @@ pub fn Wave(comptime T: type) type {
     if (@typeInfo(T) != .float)
         @compileError("Wave(T) requires a floating point type, found " ++ @typeName(T));
 
-    // The decoder and the encoder normalize with 32-bit integer constants (`maxInt(i32)`), which f16 and f32 cannot represent
-    if (@typeInfo(T).float.bits < 64)
-        @compileError("Wave(T) requires a floating point type with at least 64 bits (f64, f80 or f128), found " ++ @typeName(T));
+    // f16 cannot represent every 16-bit PCM code
+    if (@typeInfo(T).float.bits < 32)
+        @compileError("Wave(T) requires a floating point type with at least 32 bits (f32, f64, f80 or f128), found " ++ @typeName(T));
 
     return struct {
         const Self = @This();
+
+        /// The type in which integer PCM is normalized: T itself when it has at least 64 bits,
+        /// otherwise f64, which represents every `maxInt(iN)` up to i32 exactly
+        const Wide = if (@typeInfo(T).float.bits >= 64) T else f64;
 
         format_code: FormatCode,
         sample_rate: u32,
@@ -145,7 +149,7 @@ pub fn Wave(comptime T: type) type {
         /// WAVE_FORMAT_EXTENSIBLE fmt chunk is accepted when its sub-format is PCM or IEEE
         /// float; `format_code` of the result is then that sub-format.
         ///
-        /// The sample data type is the type parameter T of `Wave(T)` (e.g., f64, f80, f128).
+        /// The sample data type is the type parameter T of `Wave(T)` (e.g., f32, f64, f80, f128).
         ///
         /// The data chunk must hold a whole number of frames (one sample per channel); a
         /// short trailing frame is rejected as `InvalidFormat` rather than dropped. The fmt
@@ -351,7 +355,7 @@ pub fn Wave(comptime T: type) type {
                     .pcm => {
                         // 8-bit PCM is unsigned, with 128 as the zero level (silence)
                         const val: i16 = @as(i16, data[i]) - 128;
-                        return @as(T, @floatFromInt(val)) / std.math.maxInt(i8);
+                        return @floatCast(@as(Wide, @floatFromInt(val)) / std.math.maxInt(i8));
                     },
                     else => unreachable, // rejected by checkSupported
                 },
@@ -359,7 +363,7 @@ pub fn Wave(comptime T: type) type {
                     .pcm => {
                         const bytes_number = 2; // A i16 wave data's sample takes 2
                         const val: i16 = std.mem.readInt(i16, data[i * bytes_number ..][0..bytes_number], .little);
-                        return @as(T, @floatFromInt(val)) / std.math.maxInt(i16);
+                        return @floatCast(@as(Wide, @floatFromInt(val)) / std.math.maxInt(i16));
                     },
                     else => unreachable, // rejected by checkSupported
                 },
@@ -367,7 +371,7 @@ pub fn Wave(comptime T: type) type {
                     .pcm => {
                         const bytes_number = 3; // A i24 wave data's sample takes 3
                         const val: i24 = std.mem.readInt(i24, data[i * bytes_number ..][0..bytes_number], .little);
-                        return @as(T, @floatFromInt(val)) / std.math.maxInt(i24);
+                        return @floatCast(@as(Wide, @floatFromInt(val)) / std.math.maxInt(i24));
                     },
                     else => unreachable, // rejected by checkSupported
                 },
@@ -375,7 +379,7 @@ pub fn Wave(comptime T: type) type {
                     .pcm => {
                         const bytes_number = 4; // A i32 wave data's sample takes 4
                         const val: i32 = std.mem.readInt(i32, data[i * bytes_number ..][0..bytes_number], .little);
-                        return @as(T, @floatFromInt(val)) / std.math.maxInt(i32);
+                        return @floatCast(@as(Wide, @floatFromInt(val)) / std.math.maxInt(i32));
                     },
                     .ieee_float => {
                         const bytes_number = 4;
@@ -388,7 +392,7 @@ pub fn Wave(comptime T: type) type {
                     .ieee_float => {
                         const bytes_number = 8;
                         const val: f64 = @bitCast(std.mem.readInt(u64, data[i * bytes_number ..][0..bytes_number], .little));
-                        return @as(T, val);
+                        return @floatCast(val);
                     },
                     else => unreachable, // rejected by checkSupported
                 },
@@ -426,7 +430,7 @@ pub fn Wave(comptime T: type) type {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
                         // 8-bit PCM is unsigned, with 128 as the zero level (silence)
-                        const centered: i16 = @intFromFloat(@round(std.math.clamp(s * std.math.maxInt(i8), -std.math.maxInt(i8), std.math.maxInt(i8))));
+                        const centered: i16 = @intFromFloat(@round(std.math.clamp(@as(Wide, s) * std.math.maxInt(i8), -std.math.maxInt(i8), std.math.maxInt(i8))));
                         const val: u8 = @intCast(centered + 128);
                         try w.writeInt(u8, val, .little);
                     },
@@ -435,7 +439,7 @@ pub fn Wave(comptime T: type) type {
                 16 => switch (format_code) {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
-                        const val: i16 = @intFromFloat(@round(std.math.clamp(s * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16))));
+                        const val: i16 = @intFromFloat(@round(std.math.clamp(@as(Wide, s) * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16))));
                         try w.writeInt(i16, val, .little);
                     },
                     else => unreachable, // rejected by checkSupported
@@ -443,7 +447,7 @@ pub fn Wave(comptime T: type) type {
                 24 => switch (format_code) {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
-                        const val: i24 = @intFromFloat(@round(std.math.clamp(s * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24))));
+                        const val: i24 = @intFromFloat(@round(std.math.clamp(@as(Wide, s) * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24))));
                         try w.writeInt(i24, val, .little);
                     },
                     else => unreachable, // rejected by checkSupported
@@ -451,7 +455,7 @@ pub fn Wave(comptime T: type) type {
                 32 => switch (format_code) {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
-                        const val: i32 = @intFromFloat(@round(std.math.clamp(s * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32))));
+                        const val: i32 = @intFromFloat(@round(std.math.clamp(@as(Wide, s) * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32))));
                         try w.writeInt(i32, val, .little);
                     },
                     .ieee_float => {
@@ -1388,7 +1392,7 @@ pub fn Wave(comptime T: type) type {
         test "write rounds PCM samples to the nearest integer" {
             const allocator = std.testing.allocator;
 
-            const Case = struct { bits: u16, max: T };
+            const Case = struct { bits: u16, max: Wide };
             const cases = [_]Case{
                 .{ .bits = 8, .max = 127 },
                 .{ .bits = 16, .max = 32767 },
@@ -1403,7 +1407,7 @@ pub fn Wave(comptime T: type) type {
 
             for (cases) |c| {
                 var samples: [scaled.len]T = undefined;
-                for (&samples, scaled) |*s, v| s.* = v / c.max;
+                for (&samples, scaled) |*s, v| s.* = @floatCast(@as(Wide, v) / c.max);
 
                 const wave = Wave(T).init(.{
                     .format_code = .pcm,
@@ -1505,9 +1509,14 @@ pub fn Wave(comptime T: type) type {
                 const result = try Wave(T).read(allocator, &reader);
                 defer result.deinit(allocator);
 
-                // Below -1.0, but only by one step of the format
+                // Below -1.0, but only by one step of the format. f32 has a 24-bit mantissa,
+                // so the step of 32-bit PCM is lost and the value rounds to -1.0
                 try std.testing.expectEqual(1, result.samples.len);
-                try std.testing.expect(result.samples[0] < -1.0);
+                if (@typeInfo(T).float.bits < 64 and c.bits == 32) {
+                    try std.testing.expectEqual(-1.0, result.samples[0]);
+                } else {
+                    try std.testing.expect(result.samples[0] < -1.0);
+                }
                 try std.testing.expect(result.samples[0] > -1.01);
 
                 var w = std.Io.Writer.Allocating.init(allocator);
@@ -2463,5 +2472,91 @@ test "Each Wave's child type of samples' array" {
     _ = Wave(f128);
     _ = Wave(f80);
     _ = Wave(f64);
-    //_ = Wave(f32); // f32 cannot cover i32's max value, 2147483647
+    _ = Wave(f32);
+}
+
+test "f32 round-trips every 8- and 16-bit PCM code and 24-bit PCM codes exactly" {
+    const W = Wave(f32);
+    const Case = struct { bits: u16, step: u32 };
+    // Every code for 8 and 16 bits, and every 257th code (plus both ends) for 24 bits
+    const cases = [_]Case{ .{ .bits = 8, .step = 1 }, .{ .bits = 16, .step = 1 }, .{ .bits = 24, .step = 257 } };
+
+    for (cases) |c| {
+        const bytes_per_sample = c.bits / 8;
+        const count: u32 = @as(u32, 1) << @intCast(c.bits);
+        var code: u32 = 0;
+        while (code < count) : (code = if (code == count - 1) count else @min(code + c.step, count - 1)) {
+            var in: [4]u8 = undefined;
+            std.mem.writeInt(u32, &in, code, .little);
+
+            const sample = W.decodeSample(c.bits, .pcm, in[0..bytes_per_sample], 0);
+
+            var out: [4]u8 = undefined;
+            var w = std.Io.Writer.fixed(&out);
+            try W.encodeSample(c.bits, .pcm, sample, &w);
+
+            // The lowest code (below -1.0) is written as the next higher code
+            const lowest: u32 = if (c.bits == 8) 0 else count / 2;
+            const expected: u32 = if (code == lowest) code + 1 else code;
+            var expected_bytes: [4]u8 = undefined;
+            std.mem.writeInt(u32, &expected_bytes, expected, .little);
+            try std.testing.expectEqualSlices(u8, expected_bytes[0..bytes_per_sample], w.buffered());
+        }
+    }
+}
+
+test "f32 encodes the bounds of 32-bit PCM and saturates without overflowing" {
+    const W = Wave(f32);
+    const Case = struct { sample: f32, code: i32 };
+    const cases = [_]Case{
+        .{ .sample = 1.0, .code = std.math.maxInt(i32) },
+        .{ .sample = -1.0, .code = -std.math.maxInt(i32) },
+        .{ .sample = 2.0, .code = std.math.maxInt(i32) },
+        .{ .sample = -2.0, .code = -std.math.maxInt(i32) },
+        .{ .sample = std.math.floatMax(f32), .code = std.math.maxInt(i32) },
+        .{ .sample = -std.math.floatMax(f32), .code = -std.math.maxInt(i32) },
+        .{ .sample = 0.0, .code = 0 },
+    };
+
+    for (cases) |c| {
+        var out: [4]u8 = undefined;
+        var w = std.Io.Writer.fixed(&out);
+        try W.encodeSample(32, .pcm, c.sample, &w);
+        try std.testing.expectEqual(c.code, std.mem.readInt(i32, &out, .little));
+    }
+
+    // maxInt(i32) and -maxInt(i32) read back as 1.0 and -1.0
+    for ([_]i32{ std.math.maxInt(i32), -std.math.maxInt(i32) }, [_]f32{ 1.0, -1.0 }) |code, expected| {
+        var in: [4]u8 = undefined;
+        std.mem.writeInt(i32, &in, code, .little);
+        try std.testing.expectEqual(expected, W.decodeSample(32, .pcm, &in, 0));
+    }
+}
+
+test "f64, f80 and f128 normalize integer PCM exactly as in T itself" {
+    inline for (.{ f64, f80, f128 }) |T| {
+        const W = Wave(T);
+        try std.testing.expect(W.Wide == T);
+
+        const samples = [_]T{ 0.0, 0.1, -0.1, 0.5, -0.5, 1.0 / 3.0, -1.0 / 3.0, 0.999999, -0.999999, 1.0, -1.0, 1.5, -1.5 };
+        inline for (.{ i8, i16, i24, i32 }) |I| {
+            const bits = @typeInfo(I).int.bits;
+            for (samples) |s| {
+                // The normalization as it was done in T before the introduction of Wide
+                const expected: I = @intFromFloat(@round(std.math.clamp(s * std.math.maxInt(I), -std.math.maxInt(I), std.math.maxInt(I))));
+
+                var out: [4]u8 = undefined;
+                var w = std.Io.Writer.fixed(&out);
+                try W.encodeSample(bits, .pcm, s, &w);
+                const written: I = if (bits == 8)
+                    @intCast(@as(i16, out[0]) - 128)
+                else
+                    std.mem.readInt(I, out[0 .. bits / 8], .little);
+                try std.testing.expectEqual(expected, written);
+
+                const decoded = W.decodeSample(bits, .pcm, w.buffered(), 0);
+                try std.testing.expectEqual(@as(T, @floatFromInt(written)) / std.math.maxInt(I), decoded);
+            }
+        }
+    }
 }
