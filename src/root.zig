@@ -1511,6 +1511,148 @@ pub fn Wave(comptime T: type) type {
             try std.testing.expectEqual(1, counter.allocs);
         }
 
+        test "write pads a data chunk of odd size and read accepts it" {
+            const allocator = std.testing.allocator;
+
+            // 5 samples of 8 bits and 3 samples of 24 bits give data chunks of 5 and 9 bytes
+            const Case = struct { bits: u16, count: usize, tolerance: T };
+            const cases = [_]Case{
+                .{ .bits = 8, .count = 5, .tolerance = 1.0 / 127.0 },
+                .{ .bits = 24, .count = 3, .tolerance = 1.0 / 8388607.0 },
+            };
+
+            for (cases) |c| {
+                var samples: [5]T = undefined;
+                for (samples[0..c.count], 0..) |*s, i| s.* = @as(T, @floatFromInt(i)) / 10 - 0.2;
+
+                const wave = Wave(T).init(.{
+                    .format_code = .pcm,
+                    .sample_rate = 44100,
+                    .channels = 1,
+                    .bits = c.bits,
+                    .samples = samples[0..c.count],
+                });
+
+                var w = std.Io.Writer.Allocating.init(allocator);
+                defer w.deinit();
+                try wave.write(&w.writer, .{ .allocator = allocator });
+                const written = w.writer.buffered();
+
+                // RIFF header (12) + fmt chunk (24) + data chunk header (8), then the data and one pad byte
+                const data_bytes = c.count * (c.bits / 8);
+                try std.testing.expectEqual(1, data_bytes % 2);
+                try std.testing.expectEqual(data_bytes, std.mem.readInt(u32, written[40..44], .little));
+                try std.testing.expectEqual(44 + data_bytes + 1, written.len);
+                try std.testing.expectEqual(@as(u8, 0), written[written.len - 1]);
+                try std.testing.expectEqual(written.len - 8, std.mem.readInt(u32, written[4..8], .little));
+
+                var reader = std.Io.Reader.fixed(written);
+                const result = try Wave(T).read(allocator, &reader);
+                defer result.deinit(allocator);
+
+                try std.testing.expectEqual(c.count, result.samples.len);
+                for (samples[0..c.count], result.samples) |expected, actual| {
+                    try std.testing.expectApproxEqAbs(expected, actual, c.tolerance);
+                }
+            }
+        }
+
+        test "write puts the fmt, fact, PEAK and data chunks in order for several channels" {
+            const allocator = std.testing.allocator;
+
+            // 3 channels, 2 frames
+            var samples = [_]T{ 0.1, -0.2, 0.3, -0.4, 0.5, -0.6 };
+            const wave = Wave(T).init(.{
+                .format_code = .pcm,
+                .sample_rate = 44100,
+                .channels = 3,
+                .bits = 16,
+                .samples = &samples,
+            });
+
+            var w = std.Io.Writer.Allocating.init(allocator);
+            defer w.deinit();
+            try wave.write(&w.writer, .{ .allocator = allocator, .use_fact = true, .use_peak = true });
+            const written = w.writer.buffered();
+
+            const Expected = struct { id: []const u8, size: u32 };
+            const expected = [_]Expected{
+                .{ .id = "fmt ", .size = 16 },
+                .{ .id = "fact", .size = 4 },
+                // A version and a timestamp, then a value and a position for each of the 3 channels
+                .{ .id = "PEAK", .size = 8 + 3 * 8 },
+                .{ .id = "data", .size = 12 },
+            };
+
+            // Walk the chunks after the 12-byte RIFF header
+            var offset: usize = 12;
+            for (expected) |e| {
+                try std.testing.expectEqualStrings(e.id, written[offset..][0..4]);
+                const size = std.mem.readInt(u32, written[offset + 4 ..][0..4], .little);
+                try std.testing.expectEqual(e.size, size);
+                offset += 8 + size + (size & 1);
+            }
+            try std.testing.expectEqual(written.len, offset);
+        }
+
+        test "the PEAK chunk ignores NaN and reports an infinity" {
+            const allocator = std.testing.allocator;
+
+            const nan = std.math.nan(T);
+            const inf = std.math.inf(T);
+            const Case = struct { samples: [3]T, value: f32, position: u32 };
+            const cases = [_]Case{
+                // NaN never compares greater than the current peak, so it is skipped
+                .{ .samples = .{ 0.5, nan, -2.0 }, .value = 2.0, .position = 2 },
+                .{ .samples = .{ nan, nan, nan }, .value = 0.0, .position = 0 },
+                .{ .samples = .{ 0.5, inf, -2.0 }, .value = std.math.inf(f32), .position = 1 },
+            };
+
+            for (cases) |c| {
+                // IEEE float samples keep NaN and infinities, so `write` accepts them together with `use_peak`
+                const wave = Wave(T).init(.{
+                    .format_code = .ieee_float,
+                    .sample_rate = 44100,
+                    .channels = 1,
+                    .bits = 64,
+                    .samples = &c.samples,
+                });
+
+                const payload = try wave.peakPayload(allocator, 0);
+                defer allocator.free(payload);
+
+                const value: f32 = @bitCast(std.mem.readInt(u32, payload[8..12], .little));
+                try std.testing.expectEqual(c.value, value);
+                try std.testing.expectEqual(c.position, std.mem.readInt(u32, payload[12..16], .little));
+            }
+        }
+
+        test "read accepts a fmt chunk larger than its fixed buffers" {
+            const allocator = std.testing.allocator;
+
+            // The fmt payload buffers of `read` hold 64 bytes; the rest of the chunk must be skipped.
+            // 65 is odd, so the chunk is padded as well
+            const sizes = [_]usize{ 65, 100 };
+            for (sizes) |size| {
+                var fmt_payload = [_]u8{0} ** 100;
+                @memcpy(fmt_payload[0..test_fmt_payload.len], &test_fmt_payload);
+
+                const chunks = [_]riff.Chunk{
+                    try testChunk("fmt ", fmt_payload[0..size]),
+                    try testChunk("data", &test_data_payload),
+                };
+                const bytes = try testBuildWave(allocator, &chunks);
+                defer allocator.free(bytes);
+
+                var reader = std.Io.Reader.fixed(bytes);
+                const result = try Wave(T).read(allocator, &reader);
+                defer result.deinit(allocator);
+
+                try std.testing.expectEqual(16, result.bits);
+                try std.testing.expectEqualSlices(T, &[_]T{ 0, 1 }, result.samples);
+            }
+        }
+
         test "write accepts read-only samples slice without copying" {
             const allocator = std.testing.allocator;
             const const_samples: []const T = &[_]T{ 0.0, 0.5, -0.5, 0.25 };
