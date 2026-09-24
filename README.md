@@ -75,6 +75,8 @@ pub fn main(init: std.process.Init) !void {
 
 `write` takes a `*std.Io.Writer`. When writing to a file, remember to `flush` the writer.
 
+With `use_peak`, pass the current time as `peak_timestamp`: a reader may compare it with the modification date of the file and rescan the file if they differ, and the default `0` (the date 1970-01-01) never matches. The peak values are correct either way. This library defines a fixed value as acceptable when the output has to be reproducible; that is the maintainer's own decision, made for the build-time cache of [haruki7049/lightmix](https://github.com/haruki7049/lightmix), and it does not come from the specification, so do not take it as authoritative.
+
 ```zig
 const std = @import("std");
 const zigggwavvv = @import("zigggwavvv");
@@ -100,12 +102,15 @@ pub fn main(init: std.process.Init) !void {
     var buffer: [4096]u8 = undefined;
     var file_writer = file.writer(io, &buffer);
 
+    // The time at which the peak data is made, in seconds since 1970-01-01 (Unix time)
+    const now: u32 = @intCast(std.Io.Timestamp.now(io, .real).toSeconds());
+
     // Write the WAV file with optional chunks
     try wave.write(&file_writer.interface, .{
         .allocator = allocator,
         .use_fact = false,
         .use_peak = true,
-        .peak_timestamp = 0, // Unix time
+        .peak_timestamp = now,
     });
     try file_writer.interface.flush();
 }
