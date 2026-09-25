@@ -551,16 +551,25 @@ pub fn Wave(comptime T: type) type {
                         }
                     }
                     max_val = @floatCast(@as(Wide, @floatFromInt(max_code)) / @as(Wide, @floatFromInt(pcmMaxCode(self.bits))));
-                } else {
-                    var i: usize = ch;
-                    while (i < self.samples.len) : (i += self.channels) {
-                        // NaN compares false and stays out of the peak
-                        const abs_val = @abs(@as(f32, @floatCast(self.samples[i])));
-                        if (abs_val > max_val) {
-                            max_val = abs_val;
-                            max_pos = @intCast(i / self.channels);
+                } else switch (self.bits) {
+                    // The peak of what is written: each sample is compared in the width of the format,
+                    // so the position names the first frame that holds the largest written sample. Only
+                    // the chosen magnitude is narrowed to the f32 of the PEAK chunk
+                    inline 32, 64 => |bits| {
+                        const F = if (bits == 32) f32 else f64;
+                        var max_mag: F = 0;
+                        var i: usize = ch;
+                        while (i < self.samples.len) : (i += self.channels) {
+                            // NaN compares false and stays out of the peak
+                            const mag = @abs(@as(F, @floatCast(self.samples[i])));
+                            if (mag > max_mag) {
+                                max_mag = mag;
+                                max_pos = @intCast(i / self.channels);
+                            }
                         }
-                    }
+                        max_val = @floatCast(max_mag);
+                    },
+                    else => unreachable, // rejected by checkSupported
                 }
 
                 const offset = 8 + ch * 8;
@@ -637,7 +646,8 @@ pub fn Wave(comptime T: type) type {
         ///
         /// For each channel the PEAK chunk holds the magnitude (the absolute value) of the
         /// largest sample, so the value is never negative, and the number of the first frame
-        /// in which that magnitude occurs. For PCM the magnitude is that of the code in the data
+        /// in which that magnitude occurs, among the samples as they are written: an IEEE float
+        /// sample is compared in the width of the format (`f32` or `f64`). For PCM the magnitude is that of the code in the data
         /// chunk, divided by the largest code, so a sample of `0.5` in 8-bit PCM (the code 64)
         /// gives `64 / 127`, and of two samples that are written as the same code the first
         /// frame counts. The specification of the chunk calls the value "the
@@ -2750,6 +2760,37 @@ test "the PEAK chunk of PCM is taken from the integer codes that are written" {
         const payload = try wave.peakPayload(allocator, 0);
         defer allocator.free(payload);
         try std.testing.expectEqual(c.value, @as(f32, @bitCast(std.mem.readInt(u32, payload[8..12], .little))));
+        try std.testing.expectEqual(c.position, std.mem.readInt(u32, payload[12..16], .little));
+    }
+}
+
+test "the PEAK position of IEEE float is chosen among the samples in the width of the format" {
+    const allocator = std.testing.allocator;
+
+    const Case = struct { bits: u16, samples: []const f64, position: u32 };
+    const cases = [_]Case{
+        // The samples differ below f32 precision, and a 64-bit file keeps the difference
+        .{ .bits = 64, .samples = &.{ 1.0 + 1e-12, 1.0 + 2e-12 }, .position = 1 },
+        .{ .bits = 64, .samples = &.{ 1.0 + 2e-12, 1.0 + 1e-12 }, .position = 0 },
+        .{ .bits = 64, .samples = &.{ 1.0, -(1.0 + 1e-12) }, .position = 1 },
+        // A 32-bit file writes them as the same f32, so the first frame counts
+        .{ .bits = 32, .samples = &.{ 1.0 + 1e-9, 1.0 + 2e-9 }, .position = 0 },
+    };
+
+    for (cases) |c| {
+        const wave = Wave(f64).init(.{
+            .format_code = .ieee_float,
+            .sample_rate = 44100,
+            .channels = 1,
+            .bits = c.bits,
+            .samples = c.samples,
+        });
+
+        const payload = try wave.peakPayload(allocator, 0);
+        defer allocator.free(payload);
+
+        // The value is an f32 in either case
+        try std.testing.expectEqual(@as(f32, 1.0), @as(f32, @bitCast(std.mem.readInt(u32, payload[8..12], .little))));
         try std.testing.expectEqual(c.position, std.mem.readInt(u32, payload[12..16], .little));
     }
 }
