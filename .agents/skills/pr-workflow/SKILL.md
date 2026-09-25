@@ -20,7 +20,7 @@ Use Conventional Commits style prefixes, optionally with a scope:
 
 - `feat:` New capability or supported WAV format.
 - `fix:` Bug fixes in reading/writing logic.
-- `build:` Updates to `build.zig`, `build.zig.zon`, `flake.nix`, `flake.lock`, `.deps.nix`, or dependencies (`riff_zig`).
+- `build:` Updates to `build.zig`, `build.zig.zon`, `flake.nix`, `flake.lock`, `.deps.nix`, the workflows in `.github/workflows/` (there is no separate `ci:` prefix), or dependencies (`riff_zig`).
 - `refactor:` Code restructuring without changing behavior.
 - `docs:` Updates to README, AGENTS.md, skills, or code documentation.
 - `test:` Adding or updating unit tests.
