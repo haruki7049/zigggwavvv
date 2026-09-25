@@ -557,8 +557,12 @@ pub fn Wave(comptime T: type) type {
         pub const WriteOptions = struct {
             /// Memory allocator for temporary buffers during writing
             allocator: std.mem.Allocator,
-            /// Include 'fact' chunk in the output (typically used for non-PCM formats)
-            use_fact: bool = false,
+            /// Whether to include a 'fact' chunk in the output. `true` and `false` force it. With the
+            /// default `null`, the chunk is written for the formats other than PCM (IEEE float) and
+            /// left out for PCM. The 1991 specification requires it for compressed formats and not
+            /// for PCM, and a later document requires it for all new formats, which includes IEEE
+            /// float; libsndfile also writes it for IEEE float
+            use_fact: ?bool = null,
             /// Include 'PEAK' chunk containing peak amplitude information
             use_peak: bool = false,
             /// Timestamp for the PEAK chunk: the time at which the peak data was made, in seconds
@@ -662,7 +666,8 @@ pub fn Wave(comptime T: type) type {
             const block_align = std.math.mul(u16, self.channels, bytes_per_sample) catch return error.SizeOverflow;
             const bytes_per_sec = std.math.mul(u32, self.sample_rate, block_align) catch return error.SizeOverflow;
             const data_bytes = std.math.mul(usize, self.samples.len, bytes_per_sample) catch return error.SizeOverflow;
-            if (!fitsInRiffSize(data_bytes, riffOverheadBytes(self.channels, options.use_fact, options.use_peak)))
+            const use_fact = options.use_fact orelse (self.format_code != .pcm);
+            if (!fitsInRiffSize(data_bytes, riffOverheadBytes(self.channels, use_fact, options.use_peak)))
                 return error.SizeOverflow;
             const frame_count = std.math.cast(u32, self.samples.len / self.channels) orelse return error.SizeOverflow;
 
@@ -677,7 +682,7 @@ pub fn Wave(comptime T: type) type {
             chunk_count += 1;
 
             var fact_bytes: [4]u8 = undefined;
-            if (options.use_fact) {
+            if (use_fact) {
                 fact_bytes = writeFactBytes(frame_count);
                 chunks[chunk_count] = .{ .chunk = .{
                     .four_cc = try riff.FourCC.new("fact"),
@@ -1577,7 +1582,7 @@ pub fn Wave(comptime T: type) type {
 
                 var w = std.Io.Writer.Allocating.init(allocator);
                 defer w.deinit();
-                try wave.write(&w.writer, .{ .allocator = allocator });
+                try wave.write(&w.writer, .{ .allocator = allocator, .use_fact = false });
 
                 // RIFF header (12) + fmt chunk (24) + data chunk header (8)
                 const data = w.writer.buffered()[44..];
@@ -1601,7 +1606,7 @@ pub fn Wave(comptime T: type) type {
 
                 var w = std.Io.Writer.Allocating.init(allocator);
                 defer w.deinit();
-                try wave.write(&w.writer, .{ .allocator = allocator });
+                try wave.write(&w.writer, .{ .allocator = allocator, .use_fact = false });
 
                 const data = w.writer.buffered()[44..];
                 const expected = [_]f64{ std.math.inf(f64), -std.math.inf(f64), 0.5 };
@@ -2623,4 +2628,47 @@ test "a signaling NaN in 32-bit float data is quieted when it passes through a w
     // Still a NaN with its payload, but the quiet bit is set
     const out = w.writer.buffered();
     try std.testing.expectEqual(@as(u32, 0x7FC0_0001), std.mem.readInt(u32, out[out.len - 4 ..][0..4], .little));
+}
+
+test "write puts a fact chunk in IEEE float files by default and in PCM files only on request" {
+    const allocator = std.testing.allocator;
+
+    const Case = struct { format_code: FormatCode, bits: u16, use_fact: ?bool, has_fact: bool };
+    const cases = [_]Case{
+        .{ .format_code = .ieee_float, .bits = 32, .use_fact = null, .has_fact = true },
+        .{ .format_code = .ieee_float, .bits = 64, .use_fact = null, .has_fact = true },
+        .{ .format_code = .ieee_float, .bits = 32, .use_fact = false, .has_fact = false },
+        .{ .format_code = .pcm, .bits = 16, .use_fact = null, .has_fact = false },
+        .{ .format_code = .pcm, .bits = 16, .use_fact = true, .has_fact = true },
+    };
+
+    for (cases) |c| {
+        var samples = [_]f64{ 0.0, 0.5, -0.5 };
+        const wave = Wave(f64).init(.{
+            .format_code = c.format_code,
+            .sample_rate = 44100,
+            .channels = 1,
+            .bits = c.bits,
+            .samples = &samples,
+        });
+
+        var w = std.Io.Writer.Allocating.init(allocator);
+        defer w.deinit();
+        try wave.write(&w.writer, .{ .allocator = allocator, .use_fact = c.use_fact });
+
+        const written = w.writer.buffered();
+        // The fact chunk follows the 24 byte fmt chunk: 12 (RIFF header) + 24 = 36
+        try std.testing.expectEqualStrings(if (c.has_fact) "fact" else "data", written[36..40]);
+        if (c.has_fact) {
+            try std.testing.expectEqual(@as(u32, 4), std.mem.readInt(u32, written[40..44], .little));
+            // The number of samples per channel
+            try std.testing.expectEqual(@as(u32, 3), std.mem.readInt(u32, written[44..48], .little));
+        }
+        // The RIFF size counts everything after its own header, and the file still reads back
+        try std.testing.expectEqual(written.len - 8, @as(usize, std.mem.readInt(u32, written[4..8], .little)));
+        var reader = std.Io.Reader.fixed(written);
+        const result = try Wave(f64).read(allocator, &reader);
+        defer result.deinit(allocator);
+        try std.testing.expectEqual(@as(usize, 3), result.samples.len);
+    }
 }
