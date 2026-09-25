@@ -19,4 +19,4 @@ Both `build.zig.zon` and `.deps.nix` must be kept in sync:
 
 ## Zig version bumps
 
-When changing the Zig version, update all of the following together: `minimum_zig_version` in `build.zig.zon`, `pkgs.zig_0_XX` / `pkgs.zls_0_XX` in `flake.nix`, the version noted in `CONTRIBUTING.md`, and the Zig version used in `.github/workflows/`.
+When changing the Zig version, update all of the following together: `minimum_zig_version` in `build.zig.zon`, `pkgs.zig_0_XX` / `pkgs.zls_0_XX` in `flake.nix`, the version noted in `CONTRIBUTING.md`, the version in the "Zig version" section of `README.md`, the Zig version in the project overview of `AGENTS.md`, and the Zig version used in `.github/workflows/`.
