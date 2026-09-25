@@ -86,7 +86,7 @@ ______________________________________________________________________
 ## 6. Pull Request Guidelines
 
 1. **Format & Test Verification**: Ensure `treefmt --fail-on-change`, `zig build`, and `zig build test` all pass cleanly.
-1. **Conventional Commits**: Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `build:`, `test:`, `ci:`), optionally with a scope such as `build(flake.lock):`.
+1. **Conventional Commits**: Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `build:`, `test:`), optionally with a scope such as `build(flake.lock):`.
 1. **PR Description**: Include a clear summary of changes, an explicit issue-closing keyword (e.g., `Closes #123`) when the PR resolves an issue, and confirmation of completed verification commands.
 1. **English Only**: Write commit messages, PR titles, PR descriptions, code comments, and documentation in English.
 
