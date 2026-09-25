@@ -33,7 +33,7 @@ nix develop
 direnv allow
 ```
 
-Inside the environment, the required tools (`zig`, `zls`, `nil`, `zon2nix`, etc.) are placed in your path. `treefmt` is available through `nix fmt` or `nix develop`-based workflows configured by `treefmt-nix`.
+Inside the environment, the required tools (`zig`, `zls`, `nil`, `zon2nix`, etc.) are placed in your path. `treefmt` (configured by `treefmt-nix`) is in the path of the environment too, so a bare `treefmt` works only inside `nix develop` (or with direnv). From outside of it, run the command through the environment, for example `nix develop -c treefmt --fail-on-change`; `nix fmt` also formats the files. The same applies to `zig`: for example `nix develop -c zig build test`.
 
 You can also use any other way to install Zig, as long as the version matches.
 
@@ -64,7 +64,7 @@ Before creating a Pull Request, you **MUST** run all verification commands and e
 | `treefmt --fail-on-change` | Checks formatting compliance across all project files |
 | `zig build` | Compiles and installs the static library |
 | `zig build test` | Executes the unit tests |
-| `zig build docs` | Emits API documentation (when the public API or doc comments change) |
+| `zig build docs` | Emits API documentation to `zig-out/share/zigggwavvv/docs` (when the public API or doc comments change) |
 
 ______________________________________________________________________
 
@@ -77,6 +77,8 @@ zon2nix > .deps.nix
 treefmt
 ```
 
+The raw output of `zon2nix` needs a fix before it works: each `url` in `.deps.nix` must be the same `url` as in `build.zig.zon`, because `fetchzip` cannot unpack the `codeload.github.com` URLs that `zon2nix` emits. Follow the steps of `.agents/skills/update-dependencies/SKILL.md`, which also has a check of the Nix build on a clean store.
+
 To update Nix inputs, run `nix flake update`.
 
 ______________________________________________________________________
@@ -85,7 +87,7 @@ ______________________________________________________________________
 
 1. **Format & Test Verification**: Ensure `treefmt --fail-on-change`, `zig build`, and `zig build test` all pass cleanly.
 1. **Conventional Commits**: Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `build:`, `test:`, `ci:`), optionally with a scope such as `build(flake.lock):`.
-1. **PR Description**: Include a clear summary of changes, an explicit issue-closing keyword (e.g., `Closes #123`), and confirmation of completed verification commands.
+1. **PR Description**: Include a clear summary of changes, an explicit issue-closing keyword (e.g., `Closes #123`) when the PR resolves an issue, and confirmation of completed verification commands.
 1. **English Only**: Write commit messages, PR titles, PR descriptions, code comments, and documentation in English.
 
 ______________________________________________________________________
@@ -133,7 +135,7 @@ A change of `build.zig.zon` that does not change `version` (for example an updat
 For a release with breaking changes, add a section with the breaking changes and the migration steps to the release body. An AI assistant drafts the migration guide and the maintainer reviews it before it is published. It is not stored in the repository. The workflow writes only the generated notes, so add the guide afterwards by editing the release. These commands keep the generated notes:
 
 ```bash
-version=2.0.0-rc.1
+version=X.Y.Z # the version of the release, for example 2.0.0-rc.1
 gh release view "$version" --json body --jq .body > generated.md
 # write the reviewed migration guide to migration.md, then:
 { cat migration.md; echo; cat generated.md; } > body.md

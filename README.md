@@ -8,24 +8,26 @@
 - **Wide Format Support**:
   - **PCM**: Support for 8, 16, 24, and 32-bit depths.
   - **IEEE Float**: Support for 32 and 64-bit depths.
-- **Flexible Type Support**: Supports processing audio samples as `f32`, `f64`, `f80`, or `f128` types based on your precision needs. `Wave(T)` requires a float type with at least 32 bits, so `f16` and smaller types are rejected at compile time. With `f32`, 8-, 16- and 24-bit PCM round-trip exactly, while 32-bit PCM keeps only 24 significant bits. Reading a 64-bit float file with `f32` rounds each sample to `f32`: a finite value beyond the `f32` range becomes an infinity, and a value below the smallest `f32` subnormal becomes zero.
+- **Flexible Type Support**: Supports processing audio samples as `f32`, `f64`, `f80`, or `f128` types based on your precision needs. `Wave(T)` requires a float type with at least 32 bits, so `f16` and smaller types are rejected at compile time. With `f32`, 8-, 16- and 24-bit PCM round-trip exactly, while 32-bit PCM keeps only 24 significant bits. Reading a 64-bit float file with `f32` rounds each sample to `f32`: a finite value beyond the `f32` range becomes an infinity, and a value of at most half the smallest `f32` subnormal (2^-150) becomes zero, while a larger tiny value is rounded to that subnormal.
 - **Extended Chunk Support**: Optional generation of `fact` and `PEAK` chunks when writing files. By default, `fact` is written for IEEE float files and left out for PCM files; set `use_fact` to `true` or `false` to force it.
 
 ## Installation
 
-Add `zigggwavvv` to your `build.zig.zon` dependencies:
+Add `zigggwavvv` to the dependencies of your project. `zig fetch --save` writes the `url` and the `hash` into your `build.zig.zon` for you:
+
+```bash
+zig fetch --save https://github.com/haruki7049/zigggwavvv/archive/refs/tags/2.0.0.tar.gz
+```
+
+The entry in `build.zig.zon` then looks like this (the `hash` is filled in by Zig; use the tag of the release you want):
 
 ```zig
-.{
-    .name = "your_project",
-    .version = "0.1.0",
-    .dependencies = .{
-        .zigggwavvv = .{
-            .url = "https://github.com/haruki7049/zigggwavvv/archive/<commit_hash>.tar.gz",
-            .hash = "<hash>",
-        },
+.dependencies = .{
+    .zigggwavvv = .{
+        .url = "https://github.com/haruki7049/zigggwavvv/archive/refs/tags/2.0.0.tar.gz",
+        .hash = "<hash>",
     },
-}
+},
 ```
 
 Then in your `build.zig`:
@@ -121,6 +123,10 @@ pub fn main(init: std.process.Init) !void {
 - `zigggwavvv.Wave(T).read(allocator, reader)`: Parses a WAV file and returns a `Wave(T)` struct with samples of type `T`.
 - `wave.write(writer, options)`: Serializes a `Wave(T)` struct to a WAV file.
 - `Wave(T).deinit(allocator)`: Frees the memory allocated for samples.
+- `Wave(T).init(options)`: Creates a `Wave(T)` from an `InitOptions` (`format_code`, `sample_rate`, `channels`, `bits` and `samples`). It only copies the fields: it does not validate them and does not copy `samples`.
+- `WriteOptions`: The options of `write`: `allocator`, `use_fact`, `use_peak` and `peak_timestamp`.
+- `FormatCode`: The format of the samples, `.pcm` or `.ieee_float`.
+- `Wave(T).ReadError` and `Wave(T).WriteError`: The errors of `read` and `write`. `riff_zig` may add members to them in a minor release, so keep an `else` prong in a `switch` over either set.
 
 ## License
 
@@ -128,4 +134,4 @@ This project is dual-licensed under the **MIT License** and **Apache License 2.0
 
 ## Zig version
 
-0.16.0
+0.16.0 is the minimum version (`minimum_zig_version` in `build.zig.zon`), and it is the version that the CI uses.

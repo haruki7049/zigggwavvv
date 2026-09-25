@@ -25,15 +25,36 @@
 //! defer wave.deinit(allocator);
 //! // Process wave.samples...
 //! ```
+//!
+//! `write` takes a `*std.Io.Writer`. This example writes to memory; a file writer works as
+//! well, as long as you `flush` it (see the README).
+//! ```zig
+//! var samples = [_]f64{ 0.0, 0.5, -0.5 };
+//! const wave = Wave(f64).init(.{
+//!     .format_code = .pcm,
+//!     .sample_rate = 44100,
+//!     .channels = 1,
+//!     .bits = 16,
+//!     .samples = &samples,
+//! });
+//! var out = std.Io.Writer.Allocating.init(allocator);
+//! defer out.deinit();
+//! try wave.write(&out.writer, .{ .allocator = allocator });
+//! // The WAV file is in out.writer.buffered()
+//! ```
 
 const std = @import("std");
 const riff = @import("riff");
 
 /// Audio encoding format
 pub const FormatCode = enum(u16) {
+    /// Integer PCM (format tag 1), with 8, 16, 24 or 32 bits per sample
     pcm = 1,
+    /// IEEE float (format tag 3), with 32 or 64 bits per sample
     ieee_float = 3,
-    _, // Unsupported
+    /// Any other format tag. `read` never returns a `Wave` with such a code (it fails with
+    /// `UnsupportedFormatCode`), and `write` rejects it with `UnsupportedFormatCode`
+    _,
 };
 
 /// WAV structure representing audio properties and samples of type T
@@ -52,10 +73,18 @@ pub fn Wave(comptime T: type) type {
         /// otherwise f64, which represents every `maxInt(iN)` up to i32 exactly
         const Wide = if (@typeInfo(T).float.bits >= 64) T else f64;
 
+        /// The format of the samples in a file: PCM or IEEE float
         format_code: FormatCode,
+        /// Frames per second (Hz)
         sample_rate: u32,
+        /// The number of channels
         channels: u16,
+        /// The width of one sample in a file, in bits (the container width): 8, 16, 24 or 32 for
+        /// PCM, and 32 or 64 for IEEE float. `samples` always holds values of type `T`
         bits: u16,
+        /// The samples of all channels, interleaved: frame by frame, with one sample per channel in
+        /// each frame. Integer PCM is normalized to `-1.0..1.0`, and IEEE float keeps its values.
+        /// The length is a multiple of `channels`
         samples: []const T,
 
         /// Deinitializes the Wave structure and frees the allocated samples memory
@@ -119,10 +148,15 @@ pub fn Wave(comptime T: type) type {
 
         /// The fields of a `Wave(T)`, as taken by `init`
         pub const InitOptions = struct {
+            /// The format of the samples in a file: PCM or IEEE float
             format_code: FormatCode,
+            /// Frames per second (Hz)
             sample_rate: u32,
+            /// The number of channels
             channels: u16,
+            /// The width of one sample in a file, in bits (see `Wave.bits`)
             bits: u16,
+            /// The samples of all channels, interleaved (see `Wave.samples`). They are not copied
             samples: []const T,
         };
 
@@ -181,7 +215,8 @@ pub fn Wave(comptime T: type) type {
         /// IEEE float samples are converted to `T` as they are, so reading into a type narrower
         /// than the file loses information: with `Wave(f32)`, a 64-bit float sample is rounded
         /// to the nearest `f32`, a finite value beyond the `f32` range (about `3.4e38`) becomes
-        /// an infinity, and a value smaller than the smallest `f32` subnormal becomes `0`.
+        /// an infinity, and a value of at most half the smallest `f32` subnormal (2^-150) becomes
+        /// `0`, while a larger tiny value is rounded to that subnormal.
         /// `read` reports none of these as an error. Use `Wave(f64)` or a wider type to keep
         /// the samples of a 64-bit float file.
         ///
@@ -645,7 +680,7 @@ pub fn Wave(comptime T: type) type {
         /// error of a sample is at most half a step of the integer format. Samples outside
         /// `-1.0..1.0` are clamped, and the PEAK chunk of a PCM file describes the integer codes
         /// that are written (the clamped and rounded samples, at most `1.0`); IEEE float formats keep the real values.
-        /// `NaN` and infinite samples are rejected rather than silently clamped. IEEE float
+        /// For PCM, `NaN` and infinite samples are rejected rather than silently clamped. IEEE float
         /// formats (32 and 64-bit) convert each sample to the width of the format: it is
         /// rounded to `f32` or `f64` (exact when `T` has that width), and a finite value
         /// beyond the range of that width becomes an infinity. `NaN` stays `NaN` and
@@ -2644,7 +2679,8 @@ test "Wave(f32) reads 64-bit float samples rounded to f32, with out-of-range val
     const allocator = std.testing.allocator;
 
     // 1e300 is beyond the f32 range, 1e-310 is below the smallest f32 subnormal
-    var samples = [_]f64{ 0.1, 1e300, -1e300, 1e-310, -1e-310 };
+    // 2^-150 is half the smallest f32 subnormal (a tie, which rounds to zero); a value just above it rounds up to that subnormal
+    var samples = [_]f64{ 0.1, 1e300, -1e300, 1e-310, -1e-310, 0x1p-150, -0x1p-150, 0x1.8p-150, -0x1.8p-150 };
     const wave = Wave(f64).init(.{
         .format_code = .ieee_float,
         .sample_rate = 44100,
@@ -2666,6 +2702,10 @@ test "Wave(f32) reads 64-bit float samples rounded to f32, with out-of-range val
     try std.testing.expectEqual(-std.math.inf(f32), result.samples[2]);
     try std.testing.expectEqual(@as(u32, 0), @as(u32, @bitCast(result.samples[3])));
     try std.testing.expectEqual(@as(u32, 0x8000_0000), @as(u32, @bitCast(result.samples[4])));
+    try std.testing.expectEqual(@as(u32, 0), @as(u32, @bitCast(result.samples[5])));
+    try std.testing.expectEqual(@as(u32, 0x8000_0000), @as(u32, @bitCast(result.samples[6])));
+    try std.testing.expectEqual(@as(u32, 1), @as(u32, @bitCast(result.samples[7])));
+    try std.testing.expectEqual(@as(u32, 0x8000_0001), @as(u32, @bitCast(result.samples[8])));
 }
 
 test "a signaling NaN in 32-bit float data is quieted when it passes through a wider type" {
