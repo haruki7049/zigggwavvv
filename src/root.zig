@@ -430,6 +430,25 @@ pub fn Wave(comptime T: type) type {
             return @enumFromInt(std.mem.readInt(u16, data[24..26], .little));
         }
 
+        /// The largest positive code of PCM with `bits` bits (`maxInt(iN)`); 8-bit PCM is counted around its zero level
+        fn pcmMaxCode(bits: u16) i32 {
+            return switch (bits) {
+                8 => std.math.maxInt(i8),
+                16 => std.math.maxInt(i16),
+                24 => std.math.maxInt(i24),
+                32 => std.math.maxInt(i32),
+                else => unreachable, // only PCM sizes are passed
+            };
+        }
+
+        /// Rounds the finite sample `s` to the signed integer code of PCM with `bits` bits, in
+        /// `-maxInt..maxInt`: the scaled value is clamped, then rounded with ties away from zero.
+        /// 8-bit PCM is unsigned in the file, so its code here is centered on zero (add 128 to write it)
+        fn pcmCode(bits: u16, s: T) i32 {
+            const max: Wide = @floatFromInt(pcmMaxCode(bits));
+            return @intFromFloat(@round(std.math.clamp(@as(Wide, s) * max, -max, max)));
+        }
+
         /// Encodes one normalized sample of type T into `w` as the given (bits, format_code)
         fn encodeSample(bits: u16, format_code: FormatCode, s: T, w: *std.Io.Writer) !void {
             switch (bits) {
@@ -437,7 +456,7 @@ pub fn Wave(comptime T: type) type {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
                         // 8-bit PCM is unsigned, with 128 as the zero level (silence)
-                        const centered: i16 = @intFromFloat(@round(std.math.clamp(@as(Wide, s) * std.math.maxInt(i8), -std.math.maxInt(i8), std.math.maxInt(i8))));
+                        const centered: i16 = @intCast(pcmCode(8, s));
                         const val: u8 = @intCast(centered + 128);
                         try w.writeInt(u8, val, .little);
                     },
@@ -446,7 +465,7 @@ pub fn Wave(comptime T: type) type {
                 16 => switch (format_code) {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
-                        const val: i16 = @intFromFloat(@round(std.math.clamp(@as(Wide, s) * std.math.maxInt(i16), -std.math.maxInt(i16), std.math.maxInt(i16))));
+                        const val: i16 = @intCast(pcmCode(16, s));
                         try w.writeInt(i16, val, .little);
                     },
                     else => unreachable, // rejected by checkSupported
@@ -454,7 +473,7 @@ pub fn Wave(comptime T: type) type {
                 24 => switch (format_code) {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
-                        const val: i24 = @intFromFloat(@round(std.math.clamp(@as(Wide, s) * std.math.maxInt(i24), -std.math.maxInt(i24), std.math.maxInt(i24))));
+                        const val: i24 = @intCast(pcmCode(24, s));
                         try w.writeInt(i24, val, .little);
                     },
                     else => unreachable, // rejected by checkSupported
@@ -462,7 +481,7 @@ pub fn Wave(comptime T: type) type {
                 32 => switch (format_code) {
                     .pcm => {
                         if (!std.math.isFinite(s)) return error.NonFiniteSample;
-                        const val: i32 = @intFromFloat(@round(std.math.clamp(@as(Wide, s) * std.math.maxInt(i32), -std.math.maxInt(i32), std.math.maxInt(i32))));
+                        const val: i32 = pcmCode(32, s);
                         try w.writeInt(i32, val, .little);
                     },
                     .ieee_float => {
@@ -517,16 +536,30 @@ pub fn Wave(comptime T: type) type {
                 var max_val: f32 = 0;
                 var max_pos: u32 = 0;
 
-                var i: usize = ch;
-                while (i < self.samples.len) : (i += self.channels) {
-                    var abs_val = @abs(@as(f32, @floatCast(self.samples[i])));
-                    // PCM samples are clamped to +-1.0 when they are written, so the peak of what is
-                    // written is at most 1.0. NaN compares false and stays out of the peak
-                    if (self.format_code == .pcm and abs_val > 1.0)
-                        abs_val = 1.0;
-                    if (abs_val > max_val) {
-                        max_val = abs_val;
-                        max_pos = @intCast(i / self.channels);
+                if (self.format_code == .pcm) {
+                    // The peak of what is written: the integer codes that go into the data chunk, so the
+                    // value and the position agree with the file. `write` rejects a non-finite sample of
+                    // PCM, and it stays out of the peak here
+                    var max_code: u32 = 0;
+                    var i: usize = ch;
+                    while (i < self.samples.len) : (i += self.channels) {
+                        if (!std.math.isFinite(self.samples[i])) continue;
+                        const code: u32 = @abs(pcmCode(self.bits, self.samples[i]));
+                        if (code > max_code) {
+                            max_code = code;
+                            max_pos = @intCast(i / self.channels);
+                        }
+                    }
+                    max_val = @floatCast(@as(Wide, @floatFromInt(max_code)) / @as(Wide, @floatFromInt(pcmMaxCode(self.bits))));
+                } else {
+                    var i: usize = ch;
+                    while (i < self.samples.len) : (i += self.channels) {
+                        // NaN compares false and stays out of the peak
+                        const abs_val = @abs(@as(f32, @floatCast(self.samples[i])));
+                        if (abs_val > max_val) {
+                            max_val = abs_val;
+                            max_pos = @intCast(i / self.channels);
+                        }
                     }
                 }
 
@@ -592,8 +625,8 @@ pub fn Wave(comptime T: type) type {
         /// being produced by `write` (8-bit PCM is unsigned, with 128 as the zero level). The
         /// scaled value is rounded to the nearest integer, with ties away from zero, so the
         /// error of a sample is at most half a step of the integer format. Samples outside
-        /// `-1.0..1.0` are clamped, and the PEAK chunk of a PCM file describes the clamped
-        /// samples that are written (at most `1.0`); IEEE float formats keep the real values.
+        /// `-1.0..1.0` are clamped, and the PEAK chunk of a PCM file describes the integer codes
+        /// that are written (the clamped and rounded samples, at most `1.0`); IEEE float formats keep the real values.
         /// `NaN` and infinite samples are rejected rather than silently clamped. IEEE float
         /// formats (32 and 64-bit) convert each sample to the width of the format: it is
         /// rounded to `f32` or `f64` (exact when `T` has that width), and a finite value
@@ -604,7 +637,10 @@ pub fn Wave(comptime T: type) type {
         ///
         /// For each channel the PEAK chunk holds the magnitude (the absolute value) of the
         /// largest sample, so the value is never negative, and the number of the first frame
-        /// in which that magnitude occurs. The specification of the chunk calls the value "the
+        /// in which that magnitude occurs. For PCM the magnitude is that of the code in the data
+        /// chunk, divided by the largest code, so a sample of `0.5` in 8-bit PCM (the code 64)
+        /// gives `64 / 127`, and of two samples that are written as the same code the first
+        /// frame counts. The specification of the chunk calls the value "the
         /// signed peak value" and does not say whether the sign of the sample is kept. This
         /// library writes the magnitude, as libsndfile does, so that its files agree with those
         /// of that widely used implementation. The specification is at
@@ -892,7 +928,7 @@ pub fn Wave(comptime T: type) type {
         test "the PEAK payload stores every field in little-endian order" {
             const allocator = std.testing.allocator;
 
-            // Channel 0 holds 0.25 and -0.5 (peak 0.5 at frame 1), channel 1 holds -1.0 and 0.5 (peak 1.0 at frame 0)
+            // Channel 0 holds 0.25 and -0.5 (peak at frame 1: -0.5 is written as the code 16384, which is 16384 / 32767), channel 1 holds -1.0 and 0.5 (peak 1.0 at frame 0)
             const samples = [_]T{ 0.25, -1.0, -0.5, 0.5 };
             const wave = Wave(T).init(.{
                 .format_code = .pcm,
@@ -908,7 +944,7 @@ pub fn Wave(comptime T: type) type {
             try std.testing.expectEqualSlices(u8, &[_]u8{
                 1, 0, 0, 0, // version
                 4, 3, 2, 1, // timestamp 0x01020304
-                0x00, 0x00, 0x00, 0x3F, 1, 0, 0, 0, // channel 0: 0.5f32 (0x3F000000), frame 1
+                0x00, 0x01, 0x00, 0x3F, 1, 0, 0, 0, // channel 0: 16384 / 32767 as f32 (0x3F000100), frame 1
                 0x00, 0x00, 0x80, 0x3F, 0, 0, 0, 0, // channel 1: 1.0f32 (0x3F800000), frame 0
             }, payload);
         }
@@ -2670,5 +2706,50 @@ test "write puts a fact chunk in IEEE float files by default and in PCM files on
         const result = try Wave(f64).read(allocator, &reader);
         defer result.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 3), result.samples.len);
+    }
+}
+
+test "the PEAK chunk of PCM is taken from the integer codes that are written" {
+    const allocator = std.testing.allocator;
+
+    const Case = struct { bits: u16, samples: []const f64, value: f32, position: u32 };
+    const cases = [_]Case{
+        // 0.001 is written as the silent code, so the file has no peak
+        .{ .bits = 8, .samples = &.{0.001}, .value = 0.0, .position = 0 },
+        // 0.5 is written as the code 64, which is 64 / 127 and not 0.5
+        .{ .bits = 8, .samples = &.{0.5}, .value = 64.0 / 127.0, .position = 0 },
+        // Both samples are written as the code 32767, so the first frame holds the peak
+        .{ .bits = 16, .samples = &.{ 0.99999, 1.0 }, .value = 1.0, .position = 0 },
+        // 0.3 and -0.30002 are written as the codes 9830 and -9831, so the second frame holds the peak
+        .{ .bits = 16, .samples = &.{ 0.3, -0.30002 }, .value = 9831.0 / 32767.0, .position = 1 },
+        .{ .bits = 24, .samples = &.{ 0.2, -0.2 }, .value = 1677721.0 / 8388607.0, .position = 0 },
+        .{ .bits = 32, .samples = &.{ 0.2, 0.2000000001 }, .value = 429496730.0 / 2147483647.0, .position = 1 },
+    };
+
+    for (cases) |c| {
+        const wave = Wave(f64).init(.{
+            .format_code = .pcm,
+            .sample_rate = 44100,
+            .channels = 1,
+            .bits = c.bits,
+            .samples = c.samples,
+        });
+
+        var w = std.Io.Writer.Allocating.init(allocator);
+        defer w.deinit();
+        try wave.write(&w.writer, .{ .allocator = allocator, .use_peak = true });
+
+        // The file reads back as the codes that the PEAK chunk describes
+        var reader = std.Io.Reader.fixed(w.writer.buffered());
+        const result = try Wave(f64).read(allocator, &reader);
+        defer result.deinit(allocator);
+        var largest: f64 = 0;
+        for (result.samples) |s| largest = @max(largest, @abs(s));
+        try std.testing.expectEqual(@as(f32, @floatCast(largest)), c.value);
+
+        const payload = try wave.peakPayload(allocator, 0);
+        defer allocator.free(payload);
+        try std.testing.expectEqual(c.value, @as(f32, @bitCast(std.mem.readInt(u32, payload[8..12], .little))));
+        try std.testing.expectEqual(c.position, std.mem.readInt(u32, payload[12..16], .little));
     }
 }
