@@ -13,21 +13,21 @@
 
 ## Installation
 
-Add `zigggwavvv` to the dependencies of your project. `zig fetch --save` writes the `url` and the `hash` into your `build.zig.zon` for you:
+Add `zigggwavvv` to the dependencies of your project with `zig fetch --save`. In a directory that has no `build.zig.zon` yet, run `zig init` first; it creates the file, including the `.fingerprint` that identifies your package.
 
 ```bash
 zig fetch --save https://github.com/haruki7049/zigggwavvv/archive/refs/tags/2.0.0.tar.gz
 ```
 
-The entry in `build.zig.zon` then looks like this (the `hash` is filled in by Zig; use the tag of the release you want):
+The command writes the `url` and the `hash` itself, so you do not have to type them. It adds this entry to the value of the `.dependencies` field of your `build.zig.zon` (use the tag of the release you want; the `hash` differs for each release):
 
 ```zig
-.dependencies = .{
+.{
     .zigggwavvv = .{
         .url = "https://github.com/haruki7049/zigggwavvv/archive/refs/tags/2.0.0.tar.gz",
-        .hash = "<hash>",
+        .hash = "zigggwavvv-2.0.0-iR5xWutnAgCm4osN3wN-ooN5SNj62hGCBM6yMC4EzRMc",
     },
-},
+}
 ```
 
 Then in your `build.zig`:
