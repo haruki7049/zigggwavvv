@@ -169,6 +169,13 @@ pub fn Wave(comptime T: type) type {
         /// `-32768 / 32767`. `write` clamps to `+-maxInt` and never produces that code, so a
         /// file that contains it is written back with the next higher code.
         ///
+        /// IEEE float samples are converted to `T` as they are, so reading into a type narrower
+        /// than the file loses information: with `Wave(f32)`, a 64-bit float sample is rounded
+        /// to the nearest `f32`, a finite value beyond the `f32` range (about `3.4e38`) becomes
+        /// an infinity, and a value smaller than the smallest `f32` subnormal becomes `0`.
+        /// `read` reports none of these as an error. Use `Wave(f64)` or a wider type to keep
+        /// the samples of a 64-bit float file.
+        ///
         /// Of a WAVE_FORMAT_EXTENSIBLE fmt chunk, `read` uses the sub-format and ignores the
         /// valid bits per sample and the channel mask: samples are decoded by the size of
         /// the container (`bits`), and the channel mask is not returned, so writing the
@@ -586,8 +593,9 @@ pub fn Wave(comptime T: type) type {
         /// `NaN` and infinite samples are rejected rather than silently clamped. IEEE float
         /// formats (32 and 64-bit) convert each sample to the width of the format: it is
         /// rounded to `f32` or `f64` (exact when `T` has that width), and a finite value
-        /// beyond the range of that width becomes an infinity. `NaN` and infinities
-        /// round-trip as-is. The PEAK chunk stores its values as `f32`, so a peak beyond the
+        /// beyond the range of that width becomes an infinity. `NaN` stays `NaN` and
+        /// infinities round-trip as-is; a signaling `NaN` may be quieted (its quiet bit set)
+        /// when `T` is wider than `f32`, so its bits are not promised to survive. The PEAK chunk stores its values as `f32`, so a peak beyond the
         /// `f32` range is an infinity there as well.
         ///
         /// For each channel the PEAK chunk holds the magnitude (the absolute value) of the
@@ -2559,4 +2567,60 @@ test "f64, f80 and f128 normalize integer PCM exactly as in T itself" {
             }
         }
     }
+}
+
+test "Wave(f32) reads 64-bit float samples rounded to f32, with out-of-range values as infinity or zero" {
+    const allocator = std.testing.allocator;
+
+    // 1e300 is beyond the f32 range, 1e-310 is below the smallest f32 subnormal
+    var samples = [_]f64{ 0.1, 1e300, -1e300, 1e-310, -1e-310 };
+    const wave = Wave(f64).init(.{
+        .format_code = .ieee_float,
+        .sample_rate = 44100,
+        .channels = 1,
+        .bits = 64,
+        .samples = &samples,
+    });
+
+    var w = std.Io.Writer.Allocating.init(allocator);
+    defer w.deinit();
+    try wave.write(&w.writer, .{ .allocator = allocator });
+
+    var reader = std.Io.Reader.fixed(w.writer.buffered());
+    const result = try Wave(f32).read(allocator, &reader);
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqual(@as(f32, 0.1), result.samples[0]);
+    try std.testing.expectEqual(std.math.inf(f32), result.samples[1]);
+    try std.testing.expectEqual(-std.math.inf(f32), result.samples[2]);
+    try std.testing.expectEqual(@as(u32, 0), @as(u32, @bitCast(result.samples[3])));
+    try std.testing.expectEqual(@as(u32, 0x8000_0000), @as(u32, @bitCast(result.samples[4])));
+}
+
+test "a signaling NaN in 32-bit float data is quieted when it passes through a wider type" {
+    const allocator = std.testing.allocator;
+
+    // A mono 32-bit float file with one signaling NaN (0x7F800001), built by hand
+    var bytes: [48]u8 = undefined;
+    var fw = std.Io.Writer.fixed(&bytes);
+    try fw.writeAll("RIFF");
+    try fw.writeInt(u32, 40, .little);
+    try fw.writeAll("WAVEfmt ");
+    try fw.writeInt(u32, 16, .little);
+    try fw.writeAll(&[_]u8{ 3, 0, 1, 0, 0x44, 0xAC, 0, 0, 0x10, 0xB1, 2, 0, 4, 0, 32, 0 });
+    try fw.writeAll("data");
+    try fw.writeInt(u32, 4, .little);
+    try fw.writeInt(u32, 0x7F80_0001, .little);
+
+    var reader = std.Io.Reader.fixed(fw.buffered());
+    const wave = try Wave(f64).read(allocator, &reader);
+    defer wave.deinit(allocator);
+
+    var w = std.Io.Writer.Allocating.init(allocator);
+    defer w.deinit();
+    try wave.write(&w.writer, .{ .allocator = allocator });
+
+    // Still a NaN with its payload, but the quiet bit is set
+    const out = w.writer.buffered();
+    try std.testing.expectEqual(@as(u32, 0x7FC0_0001), std.mem.readInt(u32, out[out.len - 4 ..][0..4], .little));
 }

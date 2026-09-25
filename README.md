@@ -8,7 +8,7 @@
 - **Wide Format Support**:
   - **PCM**: Support for 8, 16, 24, and 32-bit depths.
   - **IEEE Float**: Support for 32 and 64-bit depths.
-- **Flexible Type Support**: Supports processing audio samples as `f32`, `f64`, `f80`, or `f128` types based on your precision needs. `Wave(T)` requires a float type with at least 32 bits, so `f16` and smaller types are rejected at compile time. With `f32`, 8-, 16- and 24-bit PCM round-trip exactly, while 32-bit PCM keeps only 24 significant bits.
+- **Flexible Type Support**: Supports processing audio samples as `f32`, `f64`, `f80`, or `f128` types based on your precision needs. `Wave(T)` requires a float type with at least 32 bits, so `f16` and smaller types are rejected at compile time. With `f32`, 8-, 16- and 24-bit PCM round-trip exactly, while 32-bit PCM keeps only 24 significant bits. Reading a 64-bit float file with `f32` rounds each sample to `f32`: a finite value beyond the `f32` range becomes an infinity, and a value below the smallest `f32` subnormal becomes zero.
 - **Extended Chunk Support**: Optional generation of `fact` and `PEAK` chunks when writing files.
 
 ## Installation
