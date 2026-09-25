@@ -155,7 +155,16 @@ pub fn Wave(comptime T: type) type {
         /// short trailing frame is rejected as `InvalidFormat` rather than dropped. The fmt
         /// chunk's `block_align` and `byte_rate` fields are not validated against `channels`
         /// and `bits`: they are not used to decode the data chunk, and some encoders get them
-        /// wrong, so a mismatch there does not by itself make a file unreadable.
+        /// wrong, so a mismatch there does not by itself make a file unreadable. This means that
+        /// `read` accepts a file whose frame (`channels` times the bytes of a sample) is larger
+        /// than the `u16` of `block_align`, for example 20000 channels of 32-bit samples, and
+        /// that `write` returns `SizeOverflow` for the result.
+        ///
+        /// A fmt chunk smaller than 16 bytes is rejected as `InvalidFormat` before its format
+        /// code is looked at, so it is not reported as `UnsupportedFormatCode` even when the
+        /// format is one that is not supported. A file that breaks more than one rule gets the
+        /// error of the first check that fails: an unsupported format code, then an unsupported
+        /// bit depth, and only then zero channels or a zero sample rate (`InvalidFormat`).
         ///
         /// Chunks after the data chunk, such as a `LIST` chunk with metadata, are skipped,
         /// and bytes after the RIFF chunk are ignored. The sizes of the RIFF chunk and of the
@@ -657,6 +666,17 @@ pub fn Wave(comptime T: type) type {
         /// http://shoko.calarts.edu/~tre/PeakChunk.html (no longer online; a copy is kept at
         /// https://web.archive.org/web/20060501212456/http://shoko.calarts.edu:80/~tre/PeakChunk.html).
         /// If it turns out to require the sign, following it will be a change of behavior.
+        ///
+        /// The fmt chunk is always the plain 16-byte form, also for more than two channels and
+        /// for 24- and 32-bit samples: `write` never writes a WAVE_FORMAT_EXTENSIBLE fmt chunk,
+        /// so the channel mask and the valid bits per sample are not written. The block align
+        /// (`channels` times the bytes of a sample) is stored in a `u16`, so a `Wave(T)` with
+        /// more channels than that allows is rejected with `SizeOverflow`, even if `read`
+        /// produced it.
+        ///
+        /// The payload of the data chunk is built in memory before it is written, so `write`
+        /// allocates about as many bytes as the data chunk has, in addition to the samples that
+        /// the caller holds.
         ///
         /// `write` only borrows `self.samples` and never mutates them. Callers holding
         /// `[]const T` can write without copying or casting.
@@ -2792,5 +2812,83 @@ test "the PEAK position of IEEE float is chosen among the samples in the width o
         // The value is an f32 in either case
         try std.testing.expectEqual(@as(f32, 1.0), @as(f32, @bitCast(std.mem.readInt(u32, payload[8..12], .little))));
         try std.testing.expectEqual(c.position, std.mem.readInt(u32, payload[12..16], .little));
+    }
+}
+
+/// A RIFF/WAVE file with a fmt chunk of `fmt_size` bytes (the fields of a plain fmt chunk, cut to `fmt_size`) and
+/// a data chunk of `data_size` zero bytes, in a buffer that the caller frees
+fn testWaveFile(allocator: std.mem.Allocator, fmt_size: u32, format_tag: u16, channels: u16, sample_rate: u32, bits: u16, data_size: u32) ![]u8 {
+    var fmt: [16]u8 = undefined;
+    std.mem.writeInt(u16, fmt[0..2], format_tag, .little);
+    std.mem.writeInt(u16, fmt[2..4], channels, .little);
+    std.mem.writeInt(u32, fmt[4..8], sample_rate, .little);
+    std.mem.writeInt(u32, fmt[8..12], 0, .little); // byte rate, not validated by read
+    std.mem.writeInt(u16, fmt[12..14], 0, .little); // block align, not validated by read
+    std.mem.writeInt(u16, fmt[14..16], bits, .little);
+
+    var w = std.Io.Writer.Allocating.init(allocator);
+    errdefer w.deinit();
+    try w.writer.writeAll("RIFF");
+    try w.writer.writeInt(u32, 4 + 8 + fmt_size + 8 + data_size, .little);
+    try w.writer.writeAll("WAVEfmt ");
+    try w.writer.writeInt(u32, fmt_size, .little);
+    try w.writer.writeAll(fmt[0..fmt_size]);
+    try w.writer.writeAll("data");
+    try w.writer.writeInt(u32, data_size, .little);
+    try w.writer.splatByteAll(0, data_size);
+    return w.toOwnedSlice();
+}
+
+test "read accepts a file whose block align does not fit in u16, and write then returns SizeOverflow" {
+    const allocator = std.testing.allocator;
+
+    // 20000 channels of 32-bit samples: a block align of 80000, and one frame of data
+    const file = try testWaveFile(allocator, 16, 3, 20000, 44100, 32, 80000);
+    defer allocator.free(file);
+
+    var reader = std.Io.Reader.fixed(file);
+    const wave = try Wave(f32).read(allocator, &reader);
+    defer wave.deinit(allocator);
+    try std.testing.expectEqual(@as(u16, 20000), wave.channels);
+    try std.testing.expectEqual(@as(usize, 20000), wave.samples.len);
+
+    var w = std.Io.Writer.Allocating.init(allocator);
+    defer w.deinit();
+    try std.testing.expectError(error.SizeOverflow, wave.write(&w.writer, .{ .allocator = allocator }));
+}
+
+test "read reports InvalidFormat for a fmt chunk shorter than 16 bytes, whatever its format code" {
+    const allocator = std.testing.allocator;
+
+    // 0x0002 is a format that is not supported, and its fmt chunk of 14 bytes is a legal WAVEFORMAT
+    for ([_]u16{ 0x0002, 1, 3 }) |tag| {
+        const file = try testWaveFile(allocator, 14, tag, 1, 44100, 16, 2);
+        defer allocator.free(file);
+
+        var reader = std.Io.Reader.fixed(file);
+        try std.testing.expectError(error.InvalidFormat, Wave(f32).read(allocator, &reader));
+    }
+}
+
+test "read reports an unsupported format or bit depth before zero channels or a zero sample rate" {
+    const allocator = std.testing.allocator;
+
+    const Case = struct { tag: u16, channels: u16, sample_rate: u32, bits: u16, err: anyerror };
+    const cases = [_]Case{
+        // Both a format that is not supported and zero channels
+        .{ .tag = 0x0002, .channels = 0, .sample_rate = 44100, .bits = 16, .err = error.UnsupportedFormatCode },
+        // Both a bit depth that is not supported and a zero sample rate
+        .{ .tag = 1, .channels = 1, .sample_rate = 0, .bits = 12, .err = error.UnsupportedBits },
+        // Only zero channels, or only a zero sample rate
+        .{ .tag = 1, .channels = 0, .sample_rate = 44100, .bits = 16, .err = error.InvalidFormat },
+        .{ .tag = 1, .channels = 1, .sample_rate = 0, .bits = 16, .err = error.InvalidFormat },
+    };
+
+    for (cases) |c| {
+        const file = try testWaveFile(allocator, 16, c.tag, c.channels, c.sample_rate, c.bits, 2);
+        defer allocator.free(file);
+
+        var reader = std.Io.Reader.fixed(file);
+        try std.testing.expectError(c.err, Wave(f32).read(allocator, &reader));
     }
 }
