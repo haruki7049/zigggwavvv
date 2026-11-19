@@ -296,7 +296,7 @@ pub fn Wave(comptime T: type) type {
                             format_code = if (tag == wave_format_extensible)
                                 try extensibleFormatCode(fmt_data)
                             else
-                                @enumFromInt(tag);
+                                @fromBackingInt(tag);
                             channels = std.mem.readInt(u16, fmt_data[2..4], .little);
                             sample_rate = std.mem.readInt(u32, fmt_data[4..8], .little);
                             bits = std.mem.readInt(u16, fmt_data[14..16], .little);
@@ -471,7 +471,7 @@ pub fn Wave(comptime T: type) type {
             if (!std.mem.eql(u8, data[26..40], &sub_format_guid_suffix))
                 return error.UnsupportedFormatCode;
 
-            return @enumFromInt(std.mem.readInt(u16, data[24..26], .little));
+            return @fromBackingInt(std.mem.readInt(u16, data[24..26], .little));
         }
 
         /// The largest positive code of PCM with `bits` bits (`maxInt(iN)`); 8-bit PCM is counted around its zero level
@@ -548,7 +548,7 @@ pub fn Wave(comptime T: type) type {
         /// Encodes the 16-byte payload of the fmt chunk directly into a stack buffer without heap allocation.
         fn writeFmtBytes(self: Self, block_align: u16, bytes_per_sec: u32) [16]u8 {
             var buf: [16]u8 = undefined;
-            std.mem.writeInt(u16, buf[0..2], @intFromEnum(self.format_code), .little);
+            std.mem.writeInt(u16, buf[0..2], @backingInt(self.format_code), .little);
             std.mem.writeInt(u16, buf[2..4], self.channels, .little);
             std.mem.writeInt(u32, buf[4..8], self.sample_rate, .little);
             std.mem.writeInt(u32, buf[8..12], bytes_per_sec, .little);
@@ -627,16 +627,17 @@ pub fn Wave(comptime T: type) type {
 
         /// Builds the payload of the data chunk. The caller owns the returned slice.
         fn dataPayload(self: Self, allocator: std.mem.Allocator, data_bytes: usize) ![]u8 {
-            // The exact size is already known, so allocate it once instead of letting the
-            // writer grow (and copy) as samples are encoded
-            var payload = try std.Io.Writer.Allocating.initCapacity(allocator, data_bytes);
-            defer payload.deinit();
-            const w = &payload.writer;
+            // The exact size is already known, so allocate it once and encode the samples into it
+            // through a fixed writer, which neither grows nor shrinks (and copies) the buffer
+            const payload = try allocator.alloc(u8, data_bytes);
+            errdefer allocator.free(payload);
+            var w = std.Io.Writer.fixed(payload);
 
             for (self.samples) |s|
-                try encodeSample(self.bits, self.format_code, s, w);
+                try encodeSample(self.bits, self.format_code, s, &w);
 
-            return payload.toOwnedSlice();
+            std.debug.assert(w.end == payload.len);
+            return payload;
         }
 
         /// Options for writing WAV files
@@ -1386,7 +1387,7 @@ pub fn Wave(comptime T: type) type {
                 .{ .pcm, 12, error.UnsupportedBits },
                 .{ .pcm, 64, error.UnsupportedFormatCode },
                 .{ .ieee_float, 16, error.UnsupportedFormatCode },
-                .{ @enumFromInt(2), 16, error.UnsupportedFormatCode },
+                .{ @fromBackingInt(2), 16, error.UnsupportedFormatCode },
             };
 
             for (cases) |case| {
@@ -2544,7 +2545,7 @@ pub fn Wave(comptime T: type) type {
             // 65 is odd, so the chunk is padded as well
             const sizes = [_]usize{ 65, 100 };
             for (sizes) |size| {
-                var fmt_payload = [_]u8{0} ** 100;
+                var fmt_payload: [100]u8 = @splat(0);
                 @memcpy(fmt_payload[0..test_fmt_payload.len], &test_fmt_payload);
 
                 const chunks = [_]riff.Chunk{
