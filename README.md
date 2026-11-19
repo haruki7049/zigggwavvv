@@ -134,4 +134,4 @@ This project is dual-licensed under the **MIT License** and **Apache License 2.0
 
 ## Zig version
 
-0.17.0 is the minimum version (`minimum_zig_version` in `build.zig.zon`). The CI uses 0.17.1.
+0.17.1 is the minimum version (`minimum_zig_version` in `build.zig.zon`), and it is the version that the CI uses.
