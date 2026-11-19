@@ -6,7 +6,7 @@ ______________________________________________________________________
 
 ## 1. Project Overview
 
-`zigggwavvv` is a WAV file reader/writer library written in Zig `0.16.0`, built on top of [`riff_zig`](https://github.com/haruki7049/RIFF.zig).
+`zigggwavvv` is a WAV file reader/writer library written in Zig `0.17`, built on top of [`riff_zig`](https://github.com/haruki7049/RIFF.zig).
 
 ______________________________________________________________________
 
@@ -39,7 +39,7 @@ You can also use any other way to install Zig, as long as the version matches.
 
 ### Zig version
 
-This project uses `Zig 0.16.0` (see `minimum_zig_version` in `build.zig.zon`).
+This project uses Zig `0.17` (a `0.17.x` release); the exact minimum is `minimum_zig_version` in `build.zig.zon`.
 
 ______________________________________________________________________
 

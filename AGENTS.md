@@ -9,7 +9,7 @@ ______________________________________________________________________
 `zigggwavvv` is a WAV file reader/writer library written in Zig, built on top of [`riff_zig`](https://github.com/haruki7049/RIFF.zig).
 
 - **Development Environment**: Managed with Nix (`flake.nix`), `direnv`, and `treefmt` (via `treefmt-nix`) for formatting Zig, Nix, GitHub Actions, and Markdown files.
-- **Target Language Version**: Zig `0.16.0` (`minimum_zig_version` in `build.zig.zon`). Keep external dependencies minimal.
+- **Target Language Version**: Zig `0.17` (the exact minimum is `minimum_zig_version` in `build.zig.zon`). Keep external dependencies minimal.
 - **Directory Structure**:
   - `src/root.zig`: Library entry point (public API, `FormatCode`, encoding/decoding logic and tests).
   - `src/assets/`: Sample WAV files used by tests.

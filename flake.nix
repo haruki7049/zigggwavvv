@@ -33,7 +33,8 @@
           ...
         }:
         let
-          ZIG = pkgs.zig_0_16;
+          ZIG = pkgs.zig_0_17;
+          ZLS = pkgs.zls_0_17;
 
           zigggwavvv = pkgs.stdenv.mkDerivation {
             name = "zigggwavvv";
@@ -79,7 +80,7 @@
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = [
               ZIG # Zig compiler
-              pkgs.zls_0_16 # Zig LSP
+              ZLS # Zig LSP
               pkgs.nil # Nix LSP
               pkgs.zon2nix # zon2nix
             ];
